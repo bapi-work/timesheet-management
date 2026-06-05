@@ -1,0 +1,63 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: timesheet-ingress
+  namespace: timesheet
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/rate-limit: "500"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://timesheet.yourdomain.com"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+spec:
+  tls:
+  - hosts:
+    - timesheet.yourdomain.com
+    secretName: timesheet-tls-cert
+  rules:
+  - host: timesheet.yourdomain.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: timesheet-backend
+            port:
+              number: 4000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: timesheet-frontend
+            port:
+              number: 80
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: timesheet-uploads-pvc
+  namespace: timesheet
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-csi
+provisioner: azure.com/disk  # Change based on cloud provider (ebs.csi.aws.com for AWS, etc)
+parameters:
+  skuname: Premium_LRS  # Azure specific
+reclaimPolicy: Delete
+allowVolumeExpansion: true
