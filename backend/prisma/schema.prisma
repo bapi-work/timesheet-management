@@ -88,6 +88,22 @@ enum EntryType {
   ON_CALL
 }
 
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REIMBURSED
+}
+
 // ─── Organization ───────────────────────────────────────────────────────────
 
 model Organization {
@@ -121,6 +137,7 @@ model Organization {
   holidays    Holiday[]
   projects    Project[]
   clients     Client[]
+  invoices    Invoice[]
 }
 
 model Department {
@@ -218,6 +235,8 @@ model User {
   notifications         Notification[]
   activityLogs          AuditLog[]
   refreshTokens         RefreshToken[]
+  expenses              Expense[]
+  expenseApprovals      Expense[]      @relation("ExpenseApprover")
 
   @@index([email])
   @@index([employeeId])
@@ -344,6 +363,7 @@ model Client {
 
   organization Organization @relation(fields: [organizationId], references: [id])
   projects     Project[]
+  invoices     Invoice[]
 
   @@index([organizationId, isActive])
 }
@@ -374,6 +394,7 @@ model Project {
   tasks        Task[]
   members      ProjectMember[]
   entries      TimesheetEntry[]
+  expenses     Expense[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -585,4 +606,95 @@ model CustomField {
   defaultValue String?
   order        Int     @default(0)
   isActive     Boolean @default(true)
+}
+
+// ─── Invoicing ───────────────────────────────────────────────────────────────
+
+model Invoice {
+  id             String        @id @default(cuid())
+  organizationId String
+  clientId       String
+  invoiceNumber  String        @unique
+  status         InvoiceStatus @default(DRAFT)
+  issueDate      DateTime      @default(now())
+  dueDate        DateTime
+  currency       String        @default("USD")
+  subtotal       Float         @default(0)
+  taxRate        Float         @default(0)
+  taxAmount      Float         @default(0)
+  discount       Float         @default(0)
+  total          Float         @default(0)
+  notes          String?
+  terms          String?
+  paidAt         DateTime?
+  sentAt         DateTime?
+  createdBy      String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  client       Client        @relation(fields: [clientId], references: [id])
+  items        InvoiceItem[]
+
+  @@index([organizationId, status])
+  @@index([clientId])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Float    @default(1)
+  unitPrice   Float
+  amount      Float
+  projectId   String?
+  createdAt   DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// ─── Expense Tracking ────────────────────────────────────────────────────────
+
+model Expense {
+  id             String        @id @default(cuid())
+  userId         String
+  projectId      String?
+  organizationId String?
+  category       String
+  amount         Float
+  currency       String        @default("USD")
+  date           DateTime
+  description    String
+  status         ExpenseStatus @default(DRAFT)
+  receiptUrl     String?
+  approvedById   String?
+  approvedAt     DateTime?
+  reimbursedAt   DateTime?
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user       User     @relation(fields: [userId], references: [id])
+  project    Project? @relation(fields: [projectId], references: [id])
+  approvedBy User?    @relation("ExpenseApprover", fields: [approvedById], references: [id])
+
+  @@index([userId, status])
+  @@index([projectId])
+}
+
+// ─── Backup Log ──────────────────────────────────────────────────────────────
+
+model BackupLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  createdBy      String
+  type           String   // local, ftp, s3, spaces
+  status         String   // success, failed
+  fileName       String
+  fileSizeBytes  Int?
+  destination    String?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
 }

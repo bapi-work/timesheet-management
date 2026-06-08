@@ -23,6 +23,10 @@ import notificationRoutes from './routes/notification.routes';
 import adminRoutes from './routes/admin.routes';
 import payrollRoutes from './routes/payroll.routes';
 import analyticsRoutes from './routes/analytics.routes';
+import timerRoutes from './routes/timer.routes';
+import invoiceRoutes from './routes/invoice.routes';
+import expenseRoutes from './routes/expense.routes';
+import backupRoutes from './routes/backup.routes';
 import prisma from './utils/prisma';
 
 const app = express();
@@ -66,6 +70,10 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/timer', timerRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/expenses', expenseRoutes);
+app.use('/api/backup', backupRoutes);
 
 // Public branding endpoint (used by login page before auth)
 app.get('/api/public/branding', async (_req, res) => {

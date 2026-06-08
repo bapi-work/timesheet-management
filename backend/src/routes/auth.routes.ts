@@ -9,15 +9,36 @@ import { AppError } from '../middleware/error.middleware';
 
 const router = Router();
 
+const PASSWORD_REGEX = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&_\-#])[A-Za-z\d@$!%*?&_\-#]{10,}/;
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
   mfaCode: z.string().optional(),
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string()
+    .min(10, 'Password must be at least 10 characters')
+    .regex(PASSWORD_REGEX, 'Password must contain uppercase, lowercase, number and special character (@$!%*?&_-#)'),
+});
+
+// ISO 27001 A.9.4: Track failed login attempts for account lockout
+const failedAttempts = new Map<string, { count: number; lockedUntil?: Date }>();
+const MAX_FAILED = 5;
+const LOCKOUT_MS = 30 * 60 * 1000; // 30 minutes
+
 router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password, mfaCode } = loginSchema.parse(req.body);
+
+    // ISO 27001 A.9.4: Check account lockout
+    const attempt = failedAttempts.get(email);
+    if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) {
+      const minutesLeft = Math.ceil((attempt.lockedUntil.getTime() - Date.now()) / 60000);
+      throw new AppError(`Account temporarily locked. Try again in ${minutesLeft} minute(s).`, 423);
+    }
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -25,7 +46,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
         id: true, email: true, passwordHash: true, role: true,
         organizationId: true, firstName: true, lastName: true,
         isActive: true, mfaEnabled: true, mfaSecret: true,
-        avatarUrl: true, employeeId: true,
+        avatarUrl: true, employeeId: true, ipWhitelist: true,
       },
     });
 
@@ -33,7 +54,28 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     if (!user.passwordHash) throw new AppError('Please use SSO to login', 401);
 
     const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) throw new AppError('Invalid credentials', 401);
+    if (!valid) {
+      // Track failed attempts
+      const curr = failedAttempts.get(email) || { count: 0 };
+      curr.count += 1;
+      if (curr.count >= MAX_FAILED) {
+        curr.lockedUntil = new Date(Date.now() + LOCKOUT_MS);
+        curr.count = 0;
+      }
+      failedAttempts.set(email, curr);
+      throw new AppError('Invalid credentials', 401);
+    }
+
+    // ISO 27001 A.9.4: IP whitelist check
+    if (user.ipWhitelist && user.ipWhitelist.length > 0) {
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || '';
+      if (!user.ipWhitelist.includes(clientIp)) {
+        throw new AppError('Access denied from this IP address', 403);
+      }
+    }
+
+    // Clear failed attempts on success
+    failedAttempts.delete(email);
 
     if (user.mfaEnabled) {
       if (!mfaCode) {
@@ -64,10 +106,11 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     });
 
     res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
+      httpOnly: true,          // Always httpOnly — never accessible via JS (ISO 27001 A.13.2)
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: 'strict',      // CSRF protection
       maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth',       // Restrict cookie scope to auth endpoints only
     });
 
     const { passwordHash: _, mfaSecret: __, ...safeUser } = user;
@@ -116,12 +159,15 @@ router.post('/logout', authenticate, async (req: AuthRequest, res: Response, nex
 
 router.post('/change-password', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     if (!user?.passwordHash) throw new AppError('No password set', 400);
 
     const valid = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!valid) throw new AppError('Incorrect current password', 400);
+
+    const isSamePassword = await bcrypt.compare(newPassword, user.passwordHash);
+    if (isSamePassword) throw new AppError('New password must differ from current password', 400);
 
     const hash = await bcrypt.hash(newPassword, 12);
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash } });

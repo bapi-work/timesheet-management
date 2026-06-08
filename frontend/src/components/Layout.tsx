@@ -4,49 +4,95 @@ import { useAuthStore } from '../store/auth.store';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useBranding } from '../context/BrandingContext';
+import { useTranslation } from 'react-i18next';
+import { SUPPORTED_LANGUAGES } from '../i18n';
 import {
   HomeIcon, ClockIcon, CheckCircleIcon, FolderIcon, UsersIcon,
   CalendarIcon, DocumentChartBarIcon, ChartBarIcon, CreditCardIcon,
   CogIcon, BellIcon, ArrowLeftOnRectangleIcon,
   Bars3Icon, XMarkIcon, BuildingOffice2Icon,
+  CurrencyDollarIcon, ReceiptRefundIcon, ArchiveBoxIcon, GlobeAltIcon,
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import clsx from 'clsx';
 import { ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from '../lib/roles';
+import TimerWidget from './TimerWidget';
 
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: HomeIcon },
-  { to: '/timesheets/current', label: 'My Timesheet', icon: ClockIcon },
-  { to: '/timesheets', label: 'All Timesheets', icon: ClockIcon },
-  { to: '/approvals', label: 'Approvals', icon: CheckCircleIcon },
-  { to: '/projects', label: 'Projects', icon: FolderIcon },
-  { to: '/clients', label: 'Clients', icon: BuildingOffice2Icon },
-  { to: '/attendance', label: 'Attendance', icon: CalendarIcon },
-  { to: '/leave', label: 'Leave', icon: CalendarIcon },
+  { to: '/dashboard', labelKey: 'nav.dashboard', icon: HomeIcon },
+  { to: '/timesheets/current', labelKey: 'nav.myTimesheet', icon: ClockIcon },
+  { to: '/timesheets', labelKey: 'nav.allTimesheets', icon: ClockIcon },
+  { to: '/approvals', labelKey: 'nav.approvals', icon: CheckCircleIcon },
+  { to: '/calendar', labelKey: 'nav.calendar', icon: CalendarIcon },
+  { to: '/projects', labelKey: 'nav.projects', icon: FolderIcon },
+  { to: '/clients', labelKey: 'nav.clients', icon: BuildingOffice2Icon },
+  { to: '/attendance', labelKey: 'nav.attendance', icon: CalendarIcon },
+  { to: '/leave', labelKey: 'nav.leave', icon: CalendarIcon },
+  { to: '/expenses', labelKey: 'nav.expenses', icon: ReceiptRefundIcon },
+  { to: '/invoices', labelKey: 'nav.invoices', icon: CurrencyDollarIcon },
 ];
 
 const MANAGER_NAV = [
-  { to: '/employees', label: 'Employees', icon: UsersIcon },
-  { to: '/reports', label: 'Reports', icon: DocumentChartBarIcon },
+  { to: '/employees', labelKey: 'nav.employees', icon: UsersIcon },
+  { to: '/reports', labelKey: 'nav.reports', icon: DocumentChartBarIcon },
 ];
 
-const ANALYTICS_NAV = [{ to: '/analytics', label: 'Analytics', icon: ChartBarIcon }];
-const PAYROLL_NAV = [{ to: '/payroll', label: 'Payroll', icon: CreditCardIcon }];
-const ADMIN_NAV = [{ to: '/admin', label: 'Administration', icon: CogIcon }];
+const ANALYTICS_NAV = [{ to: '/analytics', labelKey: 'nav.analytics', icon: ChartBarIcon }];
+const PAYROLL_NAV = [{ to: '/payroll', labelKey: 'nav.payroll', icon: CreditCardIcon }];
+const ADMIN_NAV = [
+  { to: '/admin', labelKey: 'nav.admin', icon: CogIcon },
+  { to: '/backup', labelKey: 'nav.backup', icon: ArchiveBoxIcon },
+];
 
-function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: React.ElementType }) {
+function NavItem({ to, labelKey, icon: Icon }: { to: string; labelKey: string; icon: React.ElementType }) {
+  const { t } = useTranslation();
   return (
     <NavLink to={to} end={to === '/timesheets/current'}
       className={({ isActive }) => clsx('sidebar-link', isActive && 'sidebar-link-active')}>
       <Icon className="h-5 w-5 flex-shrink-0" />
-      <span>{label}</span>
+      <span>{t(labelKey)}</span>
     </NavLink>
+  );
+}
+
+function LanguageSwitcher() {
+  const { i18n } = useTranslation();
+  const [open, setOpen] = useState(false);
+
+  const current = SUPPORTED_LANGUAGES.find(l => l.code === i18n.language) || SUPPORTED_LANGUAGES[0];
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-gray-100 text-gray-600 text-sm"
+        title="Change language"
+      >
+        <GlobeAltIcon className="h-4 w-4" />
+        <span>{current.flag} {current.code.toUpperCase()}</span>
+      </button>
+      {open && (
+        <div className="absolute bottom-full mb-1 right-0 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-50 min-w-[140px]">
+          {SUPPORTED_LANGUAGES.map(lang => (
+            <button
+              key={lang.code}
+              onClick={() => { i18n.changeLanguage(lang.code); setOpen(false); }}
+              className={clsx('w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2',
+                lang.code === i18n.language && 'text-blue-600 font-medium')}
+            >
+              <span>{lang.flag}</span> {lang.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
 export default function Layout() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { branding } = useBranding();
 
@@ -95,6 +141,7 @@ export default function Layout() {
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
         {NAV_ITEMS.map(item => <NavItem key={item.to} {...item} />)}
+
         {isManager && (
           <>
             <div className="pt-3 pb-1">
@@ -103,6 +150,7 @@ export default function Layout() {
             {MANAGER_NAV.map(item => <NavItem key={item.to} {...item} />)}
           </>
         )}
+
         {canViewAnalytics && !isManager && (
           <>
             <div className="pt-3 pb-1">
@@ -112,6 +160,7 @@ export default function Layout() {
           </>
         )}
         {canViewAnalytics && isManager && ANALYTICS_NAV.map(item => <NavItem key={item.to} {...item} />)}
+
         {(canRunPayroll || isAdmin) && (
           <>
             <div className="pt-3 pb-1">
@@ -123,7 +172,8 @@ export default function Layout() {
         )}
       </nav>
 
-      <div className="p-3 border-t border-gray-200">
+      <div className="p-3 border-t border-gray-200 space-y-1">
+        <LanguageSwitcher />
         <NavLink to="/profile" className={({ isActive }) => clsx('sidebar-link', isActive && 'sidebar-link-active')}>
           <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style={{ backgroundColor: 'var(--color-primary)' }}>
             {user?.firstName?.[0]}{user?.lastName?.[0]}
@@ -135,7 +185,7 @@ export default function Layout() {
         </NavLink>
         <button onClick={handleLogout} className="sidebar-link w-full mt-1 text-red-600 hover:bg-red-50 hover:text-red-700">
           <ArrowLeftOnRectangleIcon className="h-5 w-5" />
-          <span>Logout</span>
+          <span>{t('nav.logout')}</span>
         </button>
       </div>
 
@@ -196,6 +246,9 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Floating Timer Widget */}
+      <TimerWidget />
     </div>
   );
 }

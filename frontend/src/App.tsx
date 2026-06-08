@@ -21,6 +21,10 @@ import NotificationsPage from './pages/NotificationsPage';
 import AdminPage from './pages/AdminPage';
 import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
+import CalendarPage from './pages/CalendarPage';
+import ExpensesPage from './pages/ExpensesPage';
+import InvoicesPage from './pages/InvoicesPage';
+import BackupPage from './pages/BackupPage';
 import { ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from './lib/roles';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -68,12 +72,15 @@ export default function App() {
           <Route path="timesheets/current" element={<TimesheetPage />} />
           <Route path="timesheets/:id" element={<TimesheetPage />} />
           <Route path="approvals" element={<ApprovalsPage />} />
+          <Route path="calendar" element={<CalendarPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:id" element={<ProjectDetailPage />} />
           <Route path="clients" element={<ClientsPage />} />
           <Route path="clients/:id" element={<ClientDetailPage />} />
           <Route path="attendance" element={<AttendancePage />} />
           <Route path="leave" element={<LeavePage />} />
+          <Route path="expenses" element={<ExpensesPage />} />
+          <Route path="invoices" element={<InvoicesPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="employees" element={<ManagerRoute><EmployeesPage /></ManagerRoute>} />
@@ -82,6 +89,7 @@ export default function App() {
           <Route path="analytics" element={<AnalyticsRoute><AnalyticsPage /></AnalyticsRoute>} />
           <Route path="payroll" element={<PayrollRoute><PayrollPage /></PayrollRoute>} />
           <Route path="admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+          <Route path="backup" element={<AdminRoute><BackupPage /></AdminRoute>} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
