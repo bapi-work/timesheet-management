@@ -16,7 +16,7 @@ const clientSchema = z.object({
   name: z.string().min(1, 'Client name is required'),
   code: z.string().optional(),
   contactPerson: z.string().optional(),
-  contactEmail: z.string().email().optional().or(z.literal('')),
+  contactEmail: z.string().optional(),
   contactPhone: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
@@ -25,7 +25,7 @@ const clientSchema = z.object({
   zipCode: z.string().optional(),
   taxId: z.string().optional(),
   taxType: z.string().optional(),
-  website: z.string().url().optional().or(z.literal('')),
+  website: z.string().optional(),
   notes: z.string().optional(),
   isActive: z.boolean().optional(),
 });
