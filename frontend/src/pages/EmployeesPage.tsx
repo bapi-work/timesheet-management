@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { MagnifyingGlassIcon, UserPlusIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, UserPlusIcon, ArrowDownTrayIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
 import EmployeeFormModal from '../components/EmployeeFormModal';
+import toast from 'react-hot-toast';
 
 const ROLE_BADGE: Record<string, string> = {
   EMPLOYEE: 'badge-gray',
@@ -18,23 +19,58 @@ const ROLE_BADGE: Record<string, string> = {
   EXECUTIVE: 'badge-green',
 };
 
+interface Employee {
+  id: string;
+  firstName: string;
+  lastName: string;
+  employeeId: string;
+  email: string;
+  role: string;
+  designation?: string;
+  phone?: string;
+  timezone?: string;
+  joinDate?: string;
+  isActive?: boolean;
+  department?: { name: string };
+  manager?: { firstName: string; lastName: string };
+}
+
 export default function EmployeesPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [role, setRole] = useState('');
   const [showUserModal, setShowUserModal] = useState(false);
+  const [editEmployee, setEditEmployee] = useState<Employee | undefined>();
   const user = useAuthStore(s => s.user);
   const isAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ['employees', page, search, role],
     queryFn: () => api.get(`/users?page=${page}&limit=20&search=${search}&role=${role}`).then(r => r.data),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/users/${id}`),
+    onSuccess: () => {
+      toast.success('Employee deactivated');
+      qc.invalidateQueries({ queryKey: ['employees'] });
+    },
+    onError: (e: unknown) => {
+      toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to deactivate employee');
+    },
+  });
+
   const handleExport = async () => {
     const r = await api.get('/admin/export-employees', { responseType: 'blob' });
     const url = URL.createObjectURL(r.data);
     const a = document.createElement('a'); a.href = url; a.download = 'employees.xlsx'; a.click();
+  };
+
+  const handleDelete = (emp: Employee) => {
+    if (confirm(`Deactivate ${emp.firstName} ${emp.lastName}? They will no longer be able to log in.`)) {
+      deleteMutation.mutate(emp.id);
+    }
   };
 
   return (
@@ -49,7 +85,7 @@ export default function EmployeesPage() {
             <button onClick={handleExport} className="btn-secondary btn-sm">
               <ArrowDownTrayIcon className="h-4 w-4" /> Export
             </button>
-            <button onClick={() => setShowUserModal(true)} className="btn-primary btn-sm">
+            <button onClick={() => { setEditEmployee(undefined); setShowUserModal(true); }} className="btn-primary btn-sm">
               <UserPlusIcon className="h-4 w-4" /> Add Employee
             </button>
           </div>
@@ -89,32 +125,53 @@ export default function EmployeesPage() {
           <tbody className="divide-y divide-gray-100 bg-white">
             {isLoading ? (
               <tr><td colSpan={7} className="td text-center py-12"><div className="h-6 w-6 border-2 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" /></td></tr>
-            ) : (data?.users || []).map((user: Record<string, unknown>) => (
-              <tr key={user.id as string} className="tr-hover">
+            ) : (data?.users || []).map((emp: Employee) => (
+              <tr key={emp.id} className="tr-hover">
                 <td className="td">
                   <div className="flex items-center gap-3">
                     <div className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-700">
-                      {(user.firstName as string)?.[0]}{(user.lastName as string)?.[0]}
+                      {emp.firstName?.[0]}{emp.lastName?.[0]}
                     </div>
                     <div>
-                      <p className="font-medium">{user.firstName as string} {user.lastName as string}</p>
-                      <p className="text-xs text-gray-500">{user.email as string}</p>
+                      <p className="font-medium">{emp.firstName} {emp.lastName}</p>
+                      <p className="text-xs text-gray-500">{emp.email}</p>
                     </div>
                   </div>
                 </td>
-                <td className="td text-gray-500">{user.employeeId as string}</td>
-                <td className="td">{(user.department as { name: string })?.name || '—'}</td>
+                <td className="td text-gray-500">{emp.employeeId}</td>
+                <td className="td">{emp.department?.name || '—'}</td>
                 <td className="td">
-                  <span className={ROLE_BADGE[user.role as string] || 'badge-gray'}>{(user.role as string)?.replace(/_/g, ' ')}</span>
+                  <span className={ROLE_BADGE[emp.role] || 'badge-gray'}>{emp.role?.replace(/_/g, ' ')}</span>
                 </td>
                 <td className="td text-gray-500">
-                  {user.manager ? `${(user.manager as { firstName: string }).firstName} ${(user.manager as { lastName: string }).lastName}` : '—'}
+                  {emp.manager ? `${emp.manager.firstName} ${emp.manager.lastName}` : '—'}
                 </td>
                 <td className="td">
-                  <span className={user.isActive ? 'badge-green' : 'badge-red'}>{user.isActive ? 'Active' : 'Inactive'}</span>
+                  <span className={emp.isActive ? 'badge-green' : 'badge-red'}>{emp.isActive ? 'Active' : 'Inactive'}</span>
                 </td>
                 <td className="td">
-                  <Link to={`/employees/${user.id}`} className="text-primary-600 hover:underline text-sm">View</Link>
+                  <div className="flex items-center gap-2">
+                    <Link to={`/employees/${emp.id}`} className="text-primary-600 hover:underline text-sm">View</Link>
+                    {isAdmin && (
+                      <>
+                        <button
+                          onClick={() => { setEditEmployee(emp); setShowUserModal(true); }}
+                          className="p-1 rounded text-gray-400 hover:text-primary-600 hover:bg-primary-50"
+                          title="Edit"
+                        >
+                          <PencilIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(emp)}
+                          className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                          title="Deactivate"
+                          disabled={deleteMutation.isPending}
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -136,7 +193,12 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      {showUserModal && <EmployeeFormModal onClose={() => setShowUserModal(false)} />}
+      {showUserModal && (
+        <EmployeeFormModal
+          employee={editEmployee}
+          onClose={() => { setShowUserModal(false); setEditEmployee(undefined); }}
+        />
+      )}
     </div>
   );
 }

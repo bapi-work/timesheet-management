@@ -1,13 +1,23 @@
-import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
+import { useAuthStore } from '../store/auth.store';
+import { ADMIN_ROLES, hasRole } from '../lib/roles';
+import EmployeeFormModal from '../components/EmployeeFormModal';
+import toast from 'react-hot-toast';
 
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const user = useAuthStore(s => s.user);
+  const isAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const [showEditModal, setShowEditModal] = useState(false);
 
-  const { data: user, isLoading } = useQuery({
+  const { data: employee, isLoading } = useQuery({
     queryKey: ['employee', id],
     queryFn: () => api.get(`/users/${id}`).then(r => r.data),
   });
@@ -17,8 +27,26 @@ export default function EmployeeDetailPage() {
     queryFn: () => api.get(`/users/${id}/timesheets`).then(r => r.data),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/users/${id}`),
+    onSuccess: () => {
+      toast.success('Employee deactivated');
+      qc.invalidateQueries({ queryKey: ['employees'] });
+      navigate('/employees');
+    },
+    onError: (e: unknown) => {
+      toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to deactivate employee');
+    },
+  });
+
+  const handleDelete = () => {
+    if (confirm(`Deactivate ${employee?.firstName} ${employee?.lastName}? They will no longer be able to log in.`)) {
+      deleteMutation.mutate();
+    }
+  };
+
   if (isLoading) return <div className="flex justify-center py-16"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
-  if (!user) return <div className="card text-center py-12 text-gray-400">Employee not found</div>;
+  if (!employee) return <div className="card text-center py-12 text-gray-400">Employee not found</div>;
 
   return (
     <div className="space-y-6">
@@ -27,38 +55,69 @@ export default function EmployeeDetailPage() {
       </Link>
 
       <div className="card">
-        <div className="flex items-start gap-6">
-          <div className="h-16 w-16 rounded-full bg-primary-100 flex items-center justify-center text-2xl font-bold text-primary-700 flex-shrink-0">
-            {user.firstName?.[0]}{user.lastName?.[0]}
-          </div>
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold text-gray-900">{user.firstName} {user.lastName}</h1>
-            <p className="text-gray-500">{user.email}</p>
-            <div className="flex items-center gap-3 mt-2 flex-wrap">
-              <span className="badge-blue">{user.role?.replace(/_/g, ' ')}</span>
-              <span className={user.isActive ? 'badge-green' : 'badge-red'}>{user.isActive ? 'Active' : 'Inactive'}</span>
-              {user.designation && <span className="text-sm text-gray-600">{user.designation}</span>}
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="flex items-start gap-6">
+            <div className="h-16 w-16 rounded-full bg-primary-100 flex items-center justify-center text-2xl font-bold text-primary-700 flex-shrink-0">
+              {employee.firstName?.[0]}{employee.lastName?.[0]}
+            </div>
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold text-gray-900">{employee.firstName} {employee.lastName}</h1>
+              <p className="text-gray-500">{employee.email}</p>
+              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                <span className="badge-blue">{employee.role?.replace(/_/g, ' ')}</span>
+                <span className={employee.isActive ? 'badge-green' : 'badge-red'}>{employee.isActive ? 'Active' : 'Inactive'}</span>
+                {employee.designation && <span className="text-sm text-gray-600">{employee.designation}</span>}
+              </div>
             </div>
           </div>
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowEditModal(true)}
+                className="btn-secondary btn-sm flex items-center gap-1.5"
+              >
+                <PencilIcon className="h-4 w-4" /> Edit
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteMutation.isPending}
+                className="btn-sm flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-sm font-medium"
+              >
+                <TrashIcon className="h-4 w-4" /> Deactivate
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-gray-100">
           <div>
             <p className="text-xs text-gray-500">Employee ID</p>
-            <p className="font-semibold mt-0.5">{user.employeeId}</p>
+            <p className="font-semibold mt-0.5">{employee.employeeId}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Department</p>
-            <p className="font-semibold mt-0.5">{user.department?.name || '—'}</p>
+            <p className="font-semibold mt-0.5">{employee.department?.name || '—'}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Manager</p>
-            <p className="font-semibold mt-0.5">{user.manager ? `${user.manager.firstName} ${user.manager.lastName}` : '—'}</p>
+            <p className="font-semibold mt-0.5">{employee.manager ? `${employee.manager.firstName} ${employee.manager.lastName}` : '—'}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Join Date</p>
-            <p className="font-semibold mt-0.5">{user.joinDate ? format(new Date(user.joinDate), 'MMM d, yyyy') : '—'}</p>
+            <p className="font-semibold mt-0.5">{employee.joinDate ? format(new Date(employee.joinDate), 'MMM d, yyyy') : '—'}</p>
           </div>
+          {employee.phone && (
+            <div>
+              <p className="text-xs text-gray-500">Phone</p>
+              <p className="font-semibold mt-0.5">{employee.phone}</p>
+            </div>
+          )}
+          {employee.timezone && (
+            <div>
+              <p className="text-xs text-gray-500">Timezone</p>
+              <p className="font-semibold mt-0.5">{employee.timezone}</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -91,6 +150,13 @@ export default function EmployeeDetailPage() {
           </table>
         </div>
       </div>
+
+      {showEditModal && (
+        <EmployeeFormModal
+          employee={employee}
+          onClose={() => setShowEditModal(false)}
+        />
+      )}
     </div>
   );
 }
