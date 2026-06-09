@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { XMarkIcon } from '@heroicons/react/24/outline';
@@ -11,6 +11,7 @@ interface EmployeeFormValues {
   employeeId: string;
   email: string;
   role: string;
+  departmentId?: string;
   designation?: string;
   phone?: string;
   timezone?: string;
@@ -25,6 +26,7 @@ interface Employee {
   employeeId: string;
   email: string;
   role: string;
+  departmentId?: string;
   designation?: string;
   phone?: string;
   timezone?: string;
@@ -41,6 +43,11 @@ export default function EmployeeFormModal({ onClose, employee }: EmployeeFormMod
   const qc = useQueryClient();
   const isEdit = !!employee;
 
+  const { data: departments = [] } = useQuery({
+    queryKey: ['departments'],
+    queryFn: () => api.get('/departments').then(r => r.data as { id: string; name: string }[]),
+  });
+
   const { register, handleSubmit, reset, formState: { errors } } = useForm<EmployeeFormValues>({
     defaultValues: { role: 'EMPLOYEE' },
   });
@@ -53,6 +60,7 @@ export default function EmployeeFormModal({ onClose, employee }: EmployeeFormMod
         employeeId: employee.employeeId,
         email: employee.email,
         role: employee.role,
+        departmentId: employee.departmentId || '',
         designation: employee.designation || '',
         phone: employee.phone || '',
         timezone: employee.timezone || '',
@@ -163,6 +171,18 @@ export default function EmployeeFormModal({ onClose, employee }: EmployeeFormMod
                 <option value="EXECUTIVE">Executive</option>
               </select>
             </div>
+            <div>
+              <label className="label">Department</label>
+              <select {...register('departmentId')} className="input">
+                <option value="">No Department</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Designation</label>
               <input {...register('designation')} className="input" placeholder="Software Engineer" />

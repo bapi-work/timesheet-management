@@ -4,6 +4,11 @@ import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 
+const memberSchema = z.object({
+  userId: z.string().min(1),
+  role: z.string().optional(),
+});
+
 const router = Router();
 router.use(authenticate);
 
@@ -66,11 +71,76 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
           select: { id: true, name: true, code: true, status: true, billable: true },
           orderBy: { name: 'asc' },
         },
-        _count: { select: { projects: true } },
+        clientMembers: {
+          include: { user: { select: { id: true, firstName: true, lastName: true, employeeId: true, designation: true, avatarUrl: true } } },
+          orderBy: { joinedAt: 'asc' },
+        },
+        _count: { select: { projects: true, clientMembers: true } },
       },
     });
     if (!client) throw new AppError('Client not found', 404);
     res.json(client);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/members', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
+    if (!client) throw new AppError('Client not found', 404);
+
+    const members = await prisma.clientMember.findMany({
+      where: { clientId: req.params.id },
+      include: { user: { select: { id: true, firstName: true, lastName: true, employeeId: true, designation: true, avatarUrl: true } } },
+      orderBy: { joinedAt: 'asc' },
+    });
+    res.json(members);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/members', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
+    if (!client) throw new AppError('Client not found', 404);
+
+    const { userId, role } = memberSchema.parse(req.body);
+
+    // Validate user belongs to same org
+    const user = await prisma.user.findFirst({
+      where: { id: userId, organizationId: req.user!.organizationId },
+    });
+    if (!user) throw new AppError('User not found', 404);
+
+    const member = await prisma.clientMember.upsert({
+      where: { clientId_userId: { clientId: req.params.id, userId } },
+      update: { role },
+      create: { clientId: req.params.id, userId, role },
+      include: { user: { select: { id: true, firstName: true, lastName: true, employeeId: true, designation: true } } },
+    });
+    res.status(201).json(member);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id/members/:userId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
+    if (!client) throw new AppError('Client not found', 404);
+
+    await prisma.clientMember.delete({
+      where: { clientId_userId: { clientId: req.params.id, userId: req.params.userId } },
+    });
+    res.json({ message: 'Member removed' });
   } catch (err) {
     next(err);
   }

@@ -27,6 +27,7 @@ import timerRoutes from './routes/timer.routes';
 import invoiceRoutes from './routes/invoice.routes';
 import expenseRoutes from './routes/expense.routes';
 import backupRoutes from './routes/backup.routes';
+import teamRoutes from './routes/team.routes';
 import prisma from './utils/prisma';
 
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/timer', timerRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/backup', backupRoutes);
+app.use('/api/teams', teamRoutes);
 
 // Public branding endpoint (used by login page before auth)
 app.get('/api/public/branding', async (_req, res) => {

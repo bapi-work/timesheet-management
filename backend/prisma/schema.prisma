@@ -166,12 +166,16 @@ model Team {
   id           String   @id @default(cuid())
   name         String
   description  String?
-  departmentId String
+  departmentId String?
+  projectId    String?
+  clientId     String?
   leadId       String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  department Department   @relation(fields: [departmentId], references: [id])
+  department Department?  @relation(fields: [departmentId], references: [id])
+  project    Project?     @relation(fields: [projectId], references: [id])
+  client     Client?      @relation(fields: [clientId], references: [id])
   lead       User?        @relation("TeamLead", fields: [leadId], references: [id])
   members    TeamMember[]
 }
@@ -237,6 +241,7 @@ model User {
   refreshTokens         RefreshToken[]
   expenses              Expense[]
   expenseApprovals      Expense[]      @relation("ExpenseApprover")
+  clientMemberships     ClientMember[]
 
   @@index([email])
   @@index([employeeId])
@@ -361,11 +366,28 @@ model Client {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  projects     Project[]
-  invoices     Invoice[]
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  projects      Project[]
+  invoices      Invoice[]
+  clientMembers ClientMember[]
+  teams         Team[]
 
   @@index([organizationId, isActive])
+}
+
+model ClientMember {
+  id       String   @id @default(cuid())
+  clientId String
+  userId   String
+  role     String?
+  joinedAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, userId])
+  @@index([clientId])
+  @@index([userId])
 }
 
 // ─── Projects & Tasks ────────────────────────────────────────────────────────
@@ -395,6 +417,7 @@ model Project {
   members      ProjectMember[]
   entries      TimesheetEntry[]
   expenses     Expense[]
+  teams        Team[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])

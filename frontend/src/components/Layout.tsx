@@ -10,7 +10,7 @@ import {
   HomeIcon, ClockIcon, CheckCircleIcon, FolderIcon, UsersIcon,
   CalendarIcon, DocumentChartBarIcon, ChartBarIcon, CreditCardIcon,
   CogIcon, BellIcon, ArrowLeftOnRectangleIcon,
-  Bars3Icon, XMarkIcon, BuildingOffice2Icon,
+  Bars3Icon, XMarkIcon, BuildingOffice2Icon, UserGroupIcon,
   CurrencyDollarIcon, ReceiptRefundIcon, ArchiveBoxIcon, GlobeAltIcon,
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
@@ -34,6 +34,7 @@ const NAV_ITEMS = [
 
 const MANAGER_NAV = [
   { to: '/employees', labelKey: 'nav.employees', icon: UsersIcon },
+  { to: '/teams', labelKey: 'nav.teams', icon: UserGroupIcon },
   { to: '/reports', labelKey: 'nav.reports', icon: DocumentChartBarIcon },
 ];
 

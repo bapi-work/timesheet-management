@@ -25,6 +25,7 @@ import CalendarPage from './pages/CalendarPage';
 import ExpensesPage from './pages/ExpensesPage';
 import InvoicesPage from './pages/InvoicesPage';
 import BackupPage from './pages/BackupPage';
+import TeamsPage from './pages/TeamsPage';
 import { ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from './lib/roles';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="invoices" element={<InvoicesPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="profile" element={<ProfilePage />} />
+          <Route path="teams" element={<ManagerRoute><TeamsPage /></ManagerRoute>} />
           <Route path="employees" element={<ManagerRoute><EmployeesPage /></ManagerRoute>} />
           <Route path="employees/:id" element={<ManagerRoute><EmployeeDetailPage /></ManagerRoute>} />
           <Route path="reports" element={<ManagerRoute><ReportsPage /></ManagerRoute>} />
