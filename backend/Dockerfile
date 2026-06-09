@@ -22,9 +22,9 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
 COPY prisma ./prisma/
 
-RUN mkdir -p uploads && chown -R nodejs:nodejs /app
+RUN mkdir -p uploads/avatars uploads/receipts uploads/exports && chown -R nodejs:nodejs /app
 
 USER nodejs
 EXPOSE 4000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/index.js"]
