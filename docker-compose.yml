@@ -93,8 +93,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
-    profiles:
-      - production
+      - /var/www/certbot:/var/www/certbot:ro
 
 volumes:
   postgres_data:

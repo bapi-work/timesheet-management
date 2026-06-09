@@ -2,7 +2,10 @@ node_modules/
 dist/
 .env
 *.env.local
-uploads/
+uploads/*
+!uploads/avatars/.gitkeep
+!uploads/receipts/.gitkeep
+!uploads/exports/.gitkeep
 logs/
 .DS_Store
 *.log
