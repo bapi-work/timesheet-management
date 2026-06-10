@@ -3,12 +3,12 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import bcrypt from 'bcryptjs';
 import prisma from '../utils/prisma';
-import { authenticate, authorize, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 
 const router = Router();
 router.use(authenticate);
-router.use(authorize(...ADMIN_ROLES));
+router.use(authorize(...ADMIN_ROLES)); // minimum: HR_ADMIN
 
 const upload = multer({ dest: 'uploads/imports/' });
 
@@ -21,7 +21,7 @@ router.get('/organization', async (req: AuthRequest, res: Response, next: NextFu
   }
 });
 
-router.put('/organization', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.put('/organization', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const allowed = ['name', 'timezone', 'dateFormat', 'weekStartDay', 'workingHoursPerDay', 'workingDaysPerWeek', 'timesheetPeriod', 'overtimeThreshold', 'supportEmail', 'footerText'];
     const data: Record<string, unknown> = {};
@@ -54,7 +54,7 @@ router.get('/branding', async (req: AuthRequest, res: Response, next: NextFuncti
   }
 });
 
-router.put('/branding', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.put('/branding', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const allowed = ['appName', 'logoUrl', 'faviconUrl', 'primaryColor', 'secondaryColor', 'accentColor', 'sidebarBgColor', 'loginBgColor', 'footerText', 'supportEmail'];
     const data: Record<string, unknown> = {};

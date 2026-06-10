@@ -27,7 +27,7 @@ import InvoicesPage from './pages/InvoicesPage';
 import BackupPage from './pages/BackupPage';
 import TeamsPage from './pages/TeamsPage';
 import DepartmentsPage from './pages/DepartmentsPage';
-import { ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from './lib/roles';
+import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from './lib/roles';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
@@ -35,6 +35,13 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore(s => s.user);
+  if (!user) return <Navigate to="/login" replace />;
+  if (!hasRole(user.role, SYSTEM_ADMIN_ROLES)) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function HrRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore(s => s.user);
   if (!user) return <Navigate to="/login" replace />;
   if (!hasRole(user.role, ADMIN_ROLES)) return <Navigate to="/" replace />;
@@ -86,7 +93,7 @@ export default function App() {
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="teams" element={<ManagerRoute><TeamsPage /></ManagerRoute>} />
-          <Route path="departments" element={<AdminRoute><DepartmentsPage /></AdminRoute>} />
+          <Route path="departments" element={<HrRoute><DepartmentsPage /></HrRoute>} />
           <Route path="employees" element={<ManagerRoute><EmployeesPage /></ManagerRoute>} />
           <Route path="employees/:id" element={<ManagerRoute><EmployeeDetailPage /></ManagerRoute>} />
           <Route path="reports" element={<ManagerRoute><ReportsPage /></ManagerRoute>} />

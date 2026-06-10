@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import clsx from 'clsx';
-import { ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from '../lib/roles';
+import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from '../lib/roles';
 import TimerWidget from './TimerWidget';
 
 const NAV_ITEMS = [
@@ -40,8 +40,11 @@ const MANAGER_NAV = [
 
 const ANALYTICS_NAV = [{ to: '/analytics', labelKey: 'nav.analytics', icon: ChartBarIcon }];
 const PAYROLL_NAV = [{ to: '/payroll', labelKey: 'nav.payroll', icon: CreditCardIcon }];
-const ADMIN_NAV = [
+const HR_NAV = [
   { to: '/departments', labelKey: 'nav.departments', icon: BuildingOffice2Icon },
+];
+
+const SYSTEM_ADMIN_NAV = [
   { to: '/admin', labelKey: 'nav.admin', icon: CogIcon },
   { to: '/backup', labelKey: 'nav.backup', icon: ArchiveBoxIcon },
 ];
@@ -101,7 +104,8 @@ export default function Layout() {
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
   const canViewAnalytics = hasRole(user?.role, ANALYTICS_ROLES);
   const canRunPayroll = hasRole(user?.role, PAYROLL_ROLES);
-  const isAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const isHrAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const isSystemAdmin = hasRole(user?.role, SYSTEM_ADMIN_ROLES);
 
   const appName = branding.appName || 'TimeTrack Pro';
   const orgName = user?.organization?.name || branding.name || 'Enterprise';
@@ -163,13 +167,14 @@ export default function Layout() {
         )}
         {canViewAnalytics && isManager && ANALYTICS_NAV.map(item => <NavItem key={item.to} {...item} />)}
 
-        {(canRunPayroll || isAdmin) && (
+        {(canRunPayroll || isHrAdmin || isSystemAdmin) && (
           <>
             <div className="pt-3 pb-1">
               <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Admin</p>
             </div>
             {canRunPayroll && PAYROLL_NAV.map(item => <NavItem key={item.to} {...item} />)}
-            {isAdmin && ADMIN_NAV.map(item => <NavItem key={item.to} {...item} />)}
+            {isHrAdmin && HR_NAV.map(item => <NavItem key={item.to} {...item} />)}
+            {isSystemAdmin && SYSTEM_ADMIN_NAV.map(item => <NavItem key={item.to} {...item} />)}
           </>
         )}
       </nav>

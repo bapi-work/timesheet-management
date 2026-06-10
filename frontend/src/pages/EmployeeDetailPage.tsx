@@ -5,7 +5,7 @@ import api from '../lib/api';
 import { ArrowLeftIcon, PencilIcon, TrashIcon, KeyIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import { useAuthStore } from '../store/auth.store';
-import { ADMIN_ROLES, hasRole } from '../lib/roles';
+import { ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasRole } from '../lib/roles';
 import EmployeeFormModal from '../components/EmployeeFormModal';
 import toast from 'react-hot-toast';
 
@@ -15,6 +15,7 @@ export default function EmployeeDetailPage() {
   const qc = useQueryClient();
   const user = useAuthStore(s => s.user);
   const isAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const isSystemAdmin = hasRole(user?.role, SYSTEM_ADMIN_ROLES);
   const [showEditModal, setShowEditModal] = useState(false);
 
   const { data: employee, isLoading } = useQuery({
@@ -174,8 +175,8 @@ export default function EmployeeDetailPage() {
         </div>
       </div>
 
-      {/* Security — admin only */}
-      {isAdmin && (
+      {/* Security — system admin only */}
+      {isSystemAdmin && (
         <div className="card">
           <h2 className="font-semibold text-gray-900 mb-4">Security</h2>
           <div className="flex flex-wrap gap-3">

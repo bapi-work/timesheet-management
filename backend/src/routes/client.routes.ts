@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import prisma from '../utils/prisma';
-import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 
 const memberSchema = z.object({
@@ -192,7 +192,7 @@ router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Re
   }
 });
 
-router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const client = await prisma.client.findFirst({
       where: { id: req.params.id, organizationId: req.user!.organizationId },

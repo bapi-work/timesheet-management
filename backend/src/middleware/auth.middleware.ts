@@ -36,8 +36,16 @@ export function authorize(...roles: UserRole[]) {
   };
 }
 
+// SYSTEM_ADMIN only — system settings, backup, password/MFA resets
+export const SYSTEM_ONLY_ROLES = [UserRole.SYSTEM_ADMIN];
+
+// HR-level — employee & department management, holidays, audit logs, import/export
 export const ADMIN_ROLES = [UserRole.SYSTEM_ADMIN, UserRole.HR_ADMIN];
-export const PAYROLL_ROLES = [UserRole.SYSTEM_ADMIN, UserRole.HR_ADMIN, UserRole.PAYROLL_ADMIN];
+
+// Payroll processing
+export const PAYROLL_ROLES = [UserRole.SYSTEM_ADMIN, UserRole.PAYROLL_ADMIN];
+
+// Management — approve timesheets, manage projects/clients/teams
 export const MANAGER_ROLES = [
   UserRole.SYSTEM_ADMIN,
   UserRole.HR_ADMIN,
@@ -45,4 +53,5 @@ export const MANAGER_ROLES = [
   UserRole.PROJECT_MANAGER,
   UserRole.TEAM_LEAD,
 ];
-export const ANALYTICS_ROLES = [...MANAGER_ROLES, UserRole.EXECUTIVE];
+
+export const ANALYTICS_ROLES = [...MANAGER_ROLES, UserRole.EXECUTIVE, UserRole.PAYROLL_ADMIN];

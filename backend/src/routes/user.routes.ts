@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import multer from 'multer';
 import prisma from '../utils/prisma';
-import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 
@@ -143,7 +143,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
   }
 });
 
-router.post('/:id/reset-password', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/:id/reset-password', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
     if (!target) throw new AppError('User not found', 404);
@@ -157,7 +157,7 @@ router.post('/:id/reset-password', authorize(...ADMIN_ROLES), async (req: AuthRe
   }
 });
 
-router.delete('/:id/mfa', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id/mfa', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
     if (!target) throw new AppError('User not found', 404);

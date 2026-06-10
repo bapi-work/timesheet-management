@@ -2,11 +2,11 @@ import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as net from 'net';
 import prisma from '../utils/prisma';
-import { authenticate, authorize, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 
 const router = Router();
-router.use(authenticate, authorize(...ADMIN_ROLES));
+router.use(authenticate, authorize(...SYSTEM_ONLY_ROLES));
 
 // GET /api/backup/logs
 router.get('/logs', async (req: AuthRequest, res: Response, next: NextFunction) => {
