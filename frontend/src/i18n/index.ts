@@ -6,6 +6,8 @@ import en from './locales/en.json';
 import es from './locales/es.json';
 import fr from './locales/fr.json';
 import de from './locales/de.json';
+import th from './locales/th.json';
+import ms from './locales/ms.json';
 
 i18n
   .use(LanguageDetector)
@@ -16,6 +18,8 @@ i18n
       es: { translation: es },
       fr: { translation: fr },
       de: { translation: de },
+      th: { translation: th },
+      ms: { translation: ms },
     },
     fallbackLng: 'en',
     interpolation: { escapeValue: false },
@@ -30,6 +34,8 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'es', name: 'Español', flag: '🇪🇸' },
   { code: 'fr', name: 'Français', flag: '🇫🇷' },
   { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
+  { code: 'th', name: 'ภาษาไทย', flag: '🇹🇭' },
+  { code: 'ms', name: 'Bahasa Melayu', flag: '🇲🇾' },
 ];
 
 export default i18n;
