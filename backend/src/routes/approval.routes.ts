@@ -305,6 +305,153 @@ router.post('/bulk-approve', async (req: AuthRequest, res: Response, next: NextF
   }
 });
 
+// ─── Day-submission approval endpoints ───────────────────────────────────────
+
+router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const role = req.user!.role;
+    const userId = req.user!.userId;
+    const orgId = req.user!.organizationId;
+
+    let where: Record<string, unknown> = { status: 'SUBMITTED', timesheet: { user: { organizationId: orgId } } };
+
+    if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
+      // TEAM_LEAD: only their team members
+      if (role === 'TEAM_LEAD') {
+        const ledTeams = await prisma.team.findMany({
+          where: { leadId: userId },
+          include: { members: { select: { userId: true } } },
+        });
+        const memberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+        where = { status: 'SUBMITTED', timesheet: { userId: { in: memberIds } } };
+      } else {
+        // Regular managers: employees they manage
+        where = { status: 'SUBMITTED', timesheet: { user: { managerId: userId, organizationId: orgId } } };
+      }
+    }
+
+    const submissions = await prisma.daySubmission.findMany({
+      where,
+      include: {
+        timesheet: {
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, employeeId: true, department: { select: { name: true } } } },
+            entries: {
+              include: {
+                project: { select: { id: true, name: true } },
+                task: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { submittedAt: 'asc' },
+    });
+
+    // Attach only the entries matching each day
+    const result = submissions.map(sub => ({
+      ...sub,
+      dayEntries: sub.timesheet.entries.filter(e => {
+        const ed = new Date(e.date);
+        const sd = new Date(sub.date);
+        return ed.getFullYear() === sd.getFullYear() && ed.getMonth() === sd.getMonth() && ed.getDate() === sd.getDate();
+      }),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/day-submissions/:id/approve', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const role = req.user!.role;
+    const userId = req.user!.userId;
+
+    const sub = await prisma.daySubmission.findFirst({
+      where: { id: req.params.id, status: 'SUBMITTED', timesheet: { user: { organizationId: req.user!.organizationId } } },
+      include: { timesheet: { include: { user: true } } },
+    });
+    if (!sub) throw new AppError('Day submission not found or not pending', 404);
+
+    // Authorise: must be manager of this user, team lead of their team, HR or System Admin
+    const isPrivileged = ['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role);
+    if (!isPrivileged) {
+      if (role === 'TEAM_LEAD') {
+        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
+        const memberIds = new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)));
+        if (!memberIds.has(sub.timesheet.userId)) throw new AppError('Not authorized', 403);
+      } else if (sub.timesheet.user.managerId !== userId) {
+        throw new AppError('Not authorized', 403);
+      }
+    }
+
+    await prisma.daySubmission.update({
+      where: { id: req.params.id },
+      data: { status: 'APPROVED', reviewedAt: new Date(), reviewedById: userId, comments: req.body.comments },
+    });
+
+    const dateLabel = format(new Date(sub.date), 'MMM d, yyyy');
+    await notificationQueue.add({
+      userId: sub.timesheet.userId,
+      type: 'TIMESHEET_APPROVED',
+      title: 'Day Timesheet Approved',
+      message: `Your timesheet for ${dateLabel} has been approved.`,
+      data: { timesheetId: sub.timesheetId },
+    });
+
+    res.json({ message: 'Approved' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/day-submissions/:id/reject', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { comments } = req.body;
+    if (!comments) throw new AppError('Rejection reason required', 400);
+
+    const role = req.user!.role;
+    const userId = req.user!.userId;
+
+    const sub = await prisma.daySubmission.findFirst({
+      where: { id: req.params.id, status: 'SUBMITTED', timesheet: { user: { organizationId: req.user!.organizationId } } },
+      include: { timesheet: { include: { user: true } } },
+    });
+    if (!sub) throw new AppError('Day submission not found or not pending', 404);
+
+    const isPrivileged = ['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role);
+    if (!isPrivileged) {
+      if (role === 'TEAM_LEAD') {
+        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
+        const memberIds = new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)));
+        if (!memberIds.has(sub.timesheet.userId)) throw new AppError('Not authorized', 403);
+      } else if (sub.timesheet.user.managerId !== userId) {
+        throw new AppError('Not authorized', 403);
+      }
+    }
+
+    await prisma.daySubmission.update({
+      where: { id: req.params.id },
+      data: { status: 'REJECTED', reviewedAt: new Date(), reviewedById: userId, comments },
+    });
+
+    const dateLabel = format(new Date(sub.date), 'MMM d, yyyy');
+    await notificationQueue.add({
+      userId: sub.timesheet.userId,
+      type: 'TIMESHEET_REJECTED',
+      title: 'Day Timesheet Rejected',
+      message: `Your timesheet for ${dateLabel} was rejected: ${comments}`,
+      data: { timesheetId: sub.timesheetId },
+    });
+
+    res.json({ message: 'Rejected' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/delegate', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { toUserId, startDate, endDate, reason } = req.body;

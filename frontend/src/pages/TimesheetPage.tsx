@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { format, eachDayOfInterval, isWeekend, startOfWeek, endOfWeek, addWeeks, subWeeks } from 'date-fns';
+import { format, eachDayOfInterval, isWeekend, startOfWeek, endOfWeek, addWeeks } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import {
   PlusIcon, TrashIcon, PaperAirplaneIcon,
   ClipboardDocumentListIcon, LockClosedIcon,
-  ChevronLeftIcon, ChevronRightIcon,
+  ChevronLeftIcon, ChevronRightIcon, ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 
@@ -18,15 +18,27 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   APPROVED:  { label: 'Approved',  cls: 'badge-green' },
   REJECTED:  { label: 'Rejected',  cls: 'badge-red' },
   LOCKED:    { label: 'Locked',    cls: 'badge-purple' },
+  WITHDRAWN: { label: 'Withdrawn', cls: 'badge-gray' },
 };
+
+const DAY_STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
+  SUBMITTED: { label: 'Pending Approval', cls: 'bg-blue-50 text-blue-700 border border-blue-200' },
+  APPROVED:  { label: 'Approved',         cls: 'bg-green-50 text-green-700 border border-green-200' },
+  REJECTED:  { label: 'Rejected',         cls: 'bg-red-50 text-red-700 border border-red-200' },
+  WITHDRAWN: { label: 'Withdrawn',        cls: 'bg-gray-50 text-gray-500 border border-gray-200' },
+};
+
+interface DaySubmission {
+  id: string;
+  date: string;
+  status: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
+  comments?: string;
+}
 
 export default function TimesheetPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const [addingDay, setAddingDay] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  // weekOffset: 0 = current week, -1 = last week, 1 = next week, etc.
   const [weekOffset, setWeekOffset] = useState(0);
 
   const isCurrent = id === 'current' || !id;
@@ -47,12 +59,6 @@ export default function TimesheetPage() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['timesheet', id, weekOffset] });
 
-  const submitMutation = useMutation({
-    mutationFn: () => api.post(`/timesheets/${timesheet?.id}/submit`),
-    onSuccess: () => { toast.success('Timesheet submitted!'); invalidate(); },
-    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
-  });
-
   const copyPrevMutation = useMutation({
     mutationFn: () => api.post(`/timesheets/${timesheet?.id}/copy-previous`),
     onSuccess: () => { toast.success('Previous week copied!'); invalidate(); },
@@ -62,26 +68,47 @@ export default function TimesheetPage() {
   const deleteEntry = useMutation({
     mutationFn: (entryId: string) => api.delete(`/timesheets/${timesheet?.id}/entries/${entryId}`),
     onSuccess: () => { toast.success('Entry removed'); invalidate(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
+  const submitDay = useMutation({
+    mutationFn: (date: string) => api.post(`/timesheets/${timesheet?.id}/days/${date}/submit`),
+    onSuccess: () => { toast.success('Day submitted for approval!'); invalidate(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
+  const withdrawDay = useMutation({
+    mutationFn: (date: string) => api.post(`/timesheets/${timesheet?.id}/days/${date}/withdraw`),
+    onSuccess: () => { toast.success('Submission withdrawn'); invalidate(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
   if (!timesheet) return <div className="card text-center py-12 text-gray-500">Timesheet not found</div>;
 
   const days = eachDayOfInterval({ start: new Date(timesheet.periodStart), end: new Date(timesheet.periodEnd) });
-  const canEdit = ['DRAFT', 'REJECTED'].includes(timesheet.status);
+  const timesheetLocked = ['APPROVED', 'LOCKED'].includes(timesheet.status);
   const statusConfig = STATUS_CONFIG[timesheet.status] || { label: timesheet.status, cls: 'badge-gray' };
+
+  const getDaySubmission = (date: Date): DaySubmission | undefined =>
+    (timesheet.daySubmissions || []).find((ds: DaySubmission) =>
+      format(new Date(ds.date), 'yyyy-MM-dd') === format(date, 'yyyy-MM-dd')
+    );
 
   const getEntriesForDay = (date: Date) =>
     (timesheet.entries || []).filter((e: { date: string }) =>
       format(new Date(e.date), 'yyyy-MM-dd') === format(date, 'yyyy-MM-dd')
     );
 
+  const totalDaysSubmitted = (timesheet.daySubmissions || []).filter((ds: DaySubmission) => ds.status === 'SUBMITTED').length;
+  const totalDaysApproved = (timesheet.daySubmissions || []).filter((ds: DaySubmission) => ds.status === 'APPROVED').length;
+
   return (
     <div className="space-y-6 max-w-5xl">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Timesheet</h1>
+          <h1 className="text-2xl font-bold text-gray-900">My Timesheet</h1>
           {isCurrent ? (
             <div className="flex items-center gap-2 mt-1">
               <button onClick={() => { setWeekOffset(w => w - 1); setAddingDay(null); }} className="p-1 rounded hover:bg-gray-100 text-gray-500">
@@ -106,38 +133,34 @@ export default function TimesheetPage() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <span className={statusConfig.cls}>{statusConfig.label}</span>
-          {canEdit && (
-            <>
-              <button onClick={() => copyPrevMutation.mutate()} disabled={copyPrevMutation.isPending} className="btn-secondary">
-                <ClipboardDocumentListIcon className="h-4 w-4" /> Copy Previous Week
-              </button>
-              <button onClick={() => submitMutation.mutate()} disabled={submitMutation.isPending || !timesheet.totalHours} className="btn-primary">
-                <PaperAirplaneIcon className="h-4 w-4" /> Submit
-              </button>
-            </>
+          {!timesheetLocked && (
+            <button onClick={() => copyPrevMutation.mutate()} disabled={copyPrevMutation.isPending} className="btn-secondary">
+              <ClipboardDocumentListIcon className="h-4 w-4" /> Copy Previous Week
+            </button>
           )}
           {timesheet.status === 'LOCKED' && <LockClosedIcon className="h-5 w-5 text-gray-400" />}
         </div>
       </div>
 
       {/* Summary Bar */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: 'Total Hours', value: `${timesheet.totalHours.toFixed(1)}h` },
           { label: 'Billable', value: `${timesheet.billableHours.toFixed(1)}h` },
-          { label: 'Overtime', value: `${timesheet.overtimeHours.toFixed(1)}h` },
+          { label: 'Pending Approval', value: `${totalDaysSubmitted} day${totalDaysSubmitted !== 1 ? 's' : ''}`, highlight: totalDaysSubmitted > 0 },
+          { label: 'Approved Days', value: `${totalDaysApproved} day${totalDaysApproved !== 1 ? 's' : ''}`, success: totalDaysApproved > 0 },
         ].map(s => (
           <div key={s.label} className="card text-center py-4">
-            <p className="text-2xl font-bold text-gray-900">{s.value}</p>
+            <p className={clsx('text-2xl font-bold', s.highlight ? 'text-blue-600' : s.success ? 'text-green-600' : 'text-gray-900')}>{s.value}</p>
             <p className="text-xs text-gray-500 mt-1">{s.label}</p>
           </div>
         ))}
       </div>
 
-      {/* Approval Info */}
+      {/* Approval Info (week-level) */}
       {timesheet.approvals?.length > 0 && (
         <div className="card">
-          <h3 className="font-semibold text-gray-900 mb-3">Approval Status</h3>
+          <h3 className="font-semibold text-gray-900 mb-3">Week Approval Status</h3>
           <div className="space-y-2">
             {timesheet.approvals.map((a: Record<string, unknown>) => (
               <div key={a.id as string} className="flex items-center justify-between py-2 border-b last:border-0">
@@ -166,27 +189,75 @@ export default function TimesheetPage() {
             const entries = getEntriesForDay(day);
             const dayTotal = entries.reduce((s: number, e: { hours: number }) => s + e.hours, 0);
             const isWknd = isWeekend(day);
-            const isAdding = addingDay === format(day, 'yyyy-MM-dd');
+            const dateKey = format(day, 'yyyy-MM-dd');
+            const isAdding = addingDay === dateKey;
+            const daySub = getDaySubmission(day);
+            const isDayApproved = daySub?.status === 'APPROVED';
+            const isDaySubmitted = daySub?.status === 'SUBMITTED';
+            const isDayRejected = daySub?.status === 'REJECTED';
+
+            // Day is editable if: timesheet not locked AND day not approved
+            const dayEditable = !timesheetLocked && !isDayApproved;
 
             return (
-              <div key={day.toISOString()} className={clsx('px-6 py-4', isWknd && 'bg-gray-50')}>
-                <div className="flex items-center justify-between mb-2">
+              <div key={day.toISOString()} className={clsx('px-6 py-4', isWknd && 'bg-gray-50', isDayApproved && 'bg-green-50/40')}>
+                <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                   <div className="flex items-center gap-3">
-                    <div className={clsx('text-center w-10', isWknd && 'opacity-50')}>
+                    <div className={clsx('text-center w-10', isWknd && !isDayApproved && 'opacity-50')}>
                       <p className="text-xs text-gray-500">{format(day, 'EEE')}</p>
-                      <p className="text-lg font-bold text-gray-900">{format(day, 'd')}</p>
+                      <p className={clsx('text-lg font-bold', isDayApproved ? 'text-green-700' : 'text-gray-900')}>{format(day, 'd')}</p>
                     </div>
                     {dayTotal > 0 && (
                       <span className={clsx('text-sm font-semibold', dayTotal >= 8 ? 'text-green-600' : 'text-orange-600')}>
                         {dayTotal.toFixed(1)}h
                       </span>
                     )}
+                    {/* Day status badge */}
+                    {daySub && (
+                      <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium', DAY_STATUS_CONFIG[daySub.status]?.cls)}>
+                        {DAY_STATUS_CONFIG[daySub.status]?.label}
+                      </span>
+                    )}
+                    {/* Rejection reason */}
+                    {isDayRejected && daySub?.comments && (
+                      <span className="text-xs text-red-600 italic">"{daySub.comments}"</span>
+                    )}
                   </div>
-                  {canEdit && !isAdding && (
-                    <button onClick={() => setAddingDay(format(day, 'yyyy-MM-dd'))} className="btn-secondary btn-sm">
-                      <PlusIcon className="h-3.5 w-3.5" /> Add Entry
-                    </button>
-                  )}
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Submit Day button: visible if there are entries, day not submitted/approved */}
+                    {dayEditable && !isDaySubmitted && entries.length > 0 && (
+                      <button
+                        onClick={() => submitDay.mutate(dateKey)}
+                        disabled={submitDay.isPending}
+                        className="btn-primary btn-sm"
+                        title="Submit this day for approval"
+                      >
+                        <PaperAirplaneIcon className="h-3.5 w-3.5" />
+                        {isDayRejected ? 'Resubmit' : 'Submit Day'}
+                      </button>
+                    )}
+                    {/* Withdraw button: visible when submitted (pending approval) */}
+                    {isDaySubmitted && (
+                      <button
+                        onClick={() => withdrawDay.mutate(dateKey)}
+                        disabled={withdrawDay.isPending}
+                        className="btn-secondary btn-sm"
+                        title="Withdraw this day's submission"
+                      >
+                        <ArrowUturnLeftIcon className="h-3.5 w-3.5" /> Withdraw
+                      </button>
+                    )}
+                    {/* Add Entry button */}
+                    {dayEditable && !isAdding && (
+                      <button onClick={() => setAddingDay(dateKey)} className="btn-secondary btn-sm">
+                        <PlusIcon className="h-3.5 w-3.5" /> Add Entry
+                      </button>
+                    )}
+                    {isDayApproved && (
+                      <LockClosedIcon className="h-4 w-4 text-green-500" title="Day approved — locked" />
+                    )}
+                  </div>
                 </div>
 
                 {entries.map((entry: Record<string, unknown>) => (
@@ -204,7 +275,7 @@ export default function TimesheetPage() {
                         <span className="font-semibold text-gray-900">{(entry.hours as number).toFixed(1)}h</span>
                       </div>
                     </div>
-                    {canEdit && (
+                    {dayEditable && (
                       <button onClick={() => deleteEntry.mutate(entry.id as string)} className="opacity-0 group-hover:opacity-100 p-1.5 rounded text-red-400 hover:bg-red-50 hover:text-red-600 transition-all">
                         <TrashIcon className="h-4 w-4" />
                       </button>
@@ -216,17 +287,29 @@ export default function TimesheetPage() {
                   <div className="ml-13 mt-2">
                     <AddEntryForm
                       timesheetId={timesheet.id}
-                      date={format(day, 'yyyy-MM-dd')}
+                      date={dateKey}
                       projects={projects || []}
                       onDone={() => { setAddingDay(null); invalidate(); }}
                       onCancel={() => setAddingDay(null)}
                     />
                   </div>
                 )}
+
+                {entries.length === 0 && !isAdding && !isWknd && (
+                  <p className="text-xs text-gray-400 ml-13 pl-2">No entries</p>
+                )}
               </div>
             );
           })}
         </div>
+      </div>
+
+      {/* Help text */}
+      <div className="text-xs text-gray-400 space-y-0.5">
+        <p>• Add time entries to each day, then click <strong>Submit Day</strong> to send it for approval.</p>
+        <p>• Other days stay editable while a day is pending approval.</p>
+        <p>• Click <strong>Withdraw</strong> to cancel a pending submission and make changes.</p>
+        <p>• Adding or deleting an entry on a submitted day automatically withdraws that day's submission.</p>
       </div>
     </div>
   );

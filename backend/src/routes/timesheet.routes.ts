@@ -1,6 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { startOfWeek, endOfWeek, format } from 'date-fns';
+import { startOfWeek, endOfWeek, format, parseISO, startOfDay } from 'date-fns';
 import { Prisma } from '@prisma/client';
 import prisma from '../utils/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
@@ -87,6 +87,7 @@ router.get('/current', async (req: AuthRequest, res: Response, next: NextFunctio
           orderBy: { date: 'asc' },
         },
         approvals: { include: { approver: { select: { id: true, firstName: true, lastName: true } } } },
+        daySubmissions: { orderBy: { date: 'asc' } },
       },
     });
 
@@ -96,6 +97,7 @@ router.get('/current', async (req: AuthRequest, res: Response, next: NextFunctio
         include: {
           entries: { include: { project: true, task: true } },
           approvals: { include: { approver: true } },
+          daySubmissions: true,
         },
       });
     }
@@ -122,6 +124,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
           include: { approver: { select: { id: true, firstName: true, lastName: true, email: true } } },
           orderBy: { level: 'asc' },
         },
+        daySubmissions: { orderBy: { date: 'asc' } },
         user: { select: { id: true, firstName: true, lastName: true, employeeId: true, managerId: true } },
       },
     });
@@ -168,6 +171,17 @@ router.post('/:id/entries', async (req: AuthRequest, res: Response, next: NextFu
       if (timesheet.status === 'SUBMITTED') {
         await tx.timesheet.update({ where: { id: req.params.id }, data: { status: 'DRAFT', submittedAt: null } });
         await tx.timesheetApproval.deleteMany({ where: { timesheetId: req.params.id } });
+      }
+
+      // Auto-withdraw any SUBMITTED day submissions for dates being modified
+      const datesBeingAdded = [...new Set(validated.map(e => startOfDay(new Date(e.date)).toISOString()))];
+      for (const dateIso of datesBeingAdded) {
+        const daySub = await tx.daySubmission.findFirst({
+          where: { timesheetId: req.params.id, date: new Date(dateIso), status: 'SUBMITTED' },
+        });
+        if (daySub) {
+          await tx.daySubmission.update({ where: { id: daySub.id }, data: { status: 'WITHDRAWN' } });
+        }
       }
 
       const newEntries = await Promise.all(
@@ -229,9 +243,19 @@ router.delete('/:id/entries/:entryId', async (req: AuthRequest, res: Response, n
   try {
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet || timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (['SUBMITTED', 'APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot edit', 400);
+    if (['APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot edit', 400);
 
     await prisma.$transaction(async (tx) => {
+      const entry = await tx.timesheetEntry.findUnique({ where: { id: req.params.entryId } });
+      if (entry) {
+        const entryDate = startOfDay(entry.date);
+        const daySub = await tx.daySubmission.findFirst({
+          where: { timesheetId: req.params.id, date: entryDate, status: 'SUBMITTED' },
+        });
+        if (daySub) {
+          await tx.daySubmission.update({ where: { id: daySub.id }, data: { status: 'WITHDRAWN' } });
+        }
+      }
       await tx.timesheetEntry.delete({ where: { id: req.params.entryId } });
       await recalcTotals(tx, req.params.id);
     });
@@ -297,11 +321,17 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response, next: NextFun
       const employeeName = `${timesheet.user.firstName} ${timesheet.user.lastName}`;
 
       for (const approver of approverMap) {
-        // Skip if approval record already exists
         const existing = await tx.timesheetApproval.findFirst({
           where: { timesheetId: ts.id, approverId: approver.id },
         });
-        if (existing) continue;
+        if (existing) {
+          // Reset to PENDING so it shows up in the approvals queue again
+          await tx.timesheetApproval.update({
+            where: { id: existing.id },
+            data: { status: 'PENDING', comments: null, actionAt: null, dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) },
+          });
+          continue;
+        }
 
         await tx.timesheetApproval.create({
           data: {
@@ -377,6 +407,101 @@ router.post('/:id/copy-previous', async (req: AuthRequest, res: Response, next: 
 
     await recalcTotals(prisma, req.params.id);
     res.json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Per-day submit ───────────────────────────────────────────────────────────
+router.post('/:id/days/:date/submit', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const timesheet = await prisma.timesheet.findUnique({
+      where: { id: req.params.id },
+      include: { user: { include: { manager: true } } },
+    });
+    if (!timesheet) throw new AppError('Timesheet not found', 404);
+    if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
+    if (['APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot modify an approved or locked timesheet', 400);
+
+    const date = startOfDay(parseISO(req.params.date));
+
+    // Upsert DaySubmission
+    const existing = await prisma.daySubmission.findUnique({
+      where: { timesheetId_date: { timesheetId: req.params.id, date } },
+    });
+
+    let daySubmission;
+    if (existing) {
+      if (existing.status === 'APPROVED') throw new AppError('This day has already been approved', 400);
+      daySubmission = await prisma.daySubmission.update({
+        where: { id: existing.id },
+        data: { status: 'SUBMITTED', submittedAt: new Date(), reviewedAt: null, reviewedById: null, comments: null },
+      });
+    } else {
+      daySubmission = await prisma.daySubmission.create({
+        data: { timesheetId: req.params.id, date, status: 'SUBMITTED' },
+      });
+    }
+
+    const dateLabel = format(date, 'MMM d, yyyy');
+    const employeeName = `${timesheet.user.firstName} ${timesheet.user.lastName}`;
+
+    // Notify manager / team leads / HR
+    const approverIds = new Set<string>();
+    if (timesheet.user.manager) {
+      approverIds.add(timesheet.user.manager.id);
+      await notificationQueue.add({
+        userId: timesheet.user.manager.id,
+        type: 'APPROVAL_REQUIRED',
+        title: 'Day Timesheet Pending Approval',
+        message: `${employeeName}'s timesheet for ${dateLabel} needs your review.`,
+        data: { timesheetId: req.params.id, daySubmissionId: daySubmission.id },
+      });
+    }
+
+    const teams = await prisma.team.findMany({
+      where: { members: { some: { userId: timesheet.userId } } },
+      include: { lead: { select: { id: true } } },
+    });
+    for (const team of teams) {
+      if (team.lead && !approverIds.has(team.lead.id)) {
+        approverIds.add(team.lead.id);
+        await notificationQueue.add({
+          userId: team.lead.id,
+          type: 'APPROVAL_REQUIRED',
+          title: 'Day Timesheet Pending Approval',
+          message: `${employeeName}'s timesheet for ${dateLabel} needs your review.`,
+          data: { timesheetId: req.params.id, daySubmissionId: daySubmission.id },
+        });
+      }
+    }
+
+    res.json(daySubmission);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Per-day withdraw ─────────────────────────────────────────────────────────
+router.post('/:id/days/:date/withdraw', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
+    if (!timesheet) throw new AppError('Timesheet not found', 404);
+    if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
+
+    const date = startOfDay(parseISO(req.params.date));
+    const existing = await prisma.daySubmission.findUnique({
+      where: { timesheetId_date: { timesheetId: req.params.id, date } },
+    });
+    if (!existing) throw new AppError('No submission found for this day', 404);
+    if (existing.status === 'APPROVED') throw new AppError('Cannot withdraw an approved day', 400);
+
+    const updated = await prisma.daySubmission.update({
+      where: { id: existing.id },
+      data: { status: 'WITHDRAWN' },
+    });
+
+    res.json(updated);
   } catch (err) {
     next(err);
   }

@@ -37,6 +37,13 @@ enum ApprovalStatus {
   DELEGATED
 }
 
+enum DaySubmissionStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
 enum LeaveStatus {
   PENDING
   APPROVED
@@ -242,6 +249,7 @@ model User {
   expenses              Expense[]
   expenseApprovals      Expense[]      @relation("ExpenseApprover")
   clientMemberships     ClientMember[]
+  daySubmissionReviews  DaySubmission[] @relation("DaySubmissionReviewer")
 
   @@index([email])
   @@index([employeeId])
@@ -276,9 +284,10 @@ model Timesheet {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
-  user      User                @relation(fields: [userId], references: [id])
-  entries   TimesheetEntry[]
-  approvals TimesheetApproval[]
+  user           User                @relation(fields: [userId], references: [id])
+  entries        TimesheetEntry[]
+  approvals      TimesheetApproval[]
+  daySubmissions DaySubmission[]
 
   @@unique([userId, periodStart, periodEnd])
   @@index([userId, status])
@@ -327,6 +336,26 @@ model TimesheetApproval {
 
   @@index([timesheetId])
   @@index([approverId, status])
+}
+
+model DaySubmission {
+  id           String              @id @default(cuid())
+  timesheetId  String
+  date         DateTime            @db.Date
+  status       DaySubmissionStatus @default(SUBMITTED)
+  submittedAt  DateTime            @default(now())
+  reviewedAt   DateTime?
+  reviewedById String?
+  comments     String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  timesheet  Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  reviewedBy User?     @relation("DaySubmissionReviewer", fields: [reviewedById], references: [id])
+
+  @@unique([timesheetId, date])
+  @@index([timesheetId])
+  @@index([status])
 }
 
 model ApprovalDelegation {

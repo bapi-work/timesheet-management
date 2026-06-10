@@ -3,27 +3,47 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { CheckIcon, XMarkIcon, CheckCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, XMarkIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+
+type Tab = 'days' | 'weeks';
 
 export default function ApprovalsPage() {
   const qc = useQueryClient();
+  const [tab, setTab] = useState<Tab>('days');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [rejectId, setRejectId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<{ id: string; type: 'day' | 'week' } | null>(null);
   const [comment, setComment] = useState('');
 
-  const { data: pending = [], isLoading } = useQuery({
+  // Day submissions
+  const { data: dayPending = [], isLoading: dayLoading } = useQuery({
+    queryKey: ['approvals', 'day-pending'],
+    queryFn: () => api.get('/approvals/day-submissions/pending').then(r => r.data),
+  });
+
+  // Week approvals (legacy)
+  const { data: weekPending = [], isLoading: weekLoading } = useQuery({
     queryKey: ['approvals', 'pending'],
     queryFn: () => api.get('/approvals/pending').then(r => r.data),
   });
 
-  const approveMutation = useMutation({
+  const approveDayMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/approvals/day-submissions/${id}/approve`),
+    onSuccess: () => { toast.success('Day approved!'); qc.invalidateQueries({ queryKey: ['approvals'] }); },
+  });
+
+  const rejectDayMutation = useMutation({
+    mutationFn: ({ id, comments }: { id: string; comments: string }) => api.post(`/approvals/day-submissions/${id}/reject`, { comments }),
+    onSuccess: () => { toast.success('Day rejected'); qc.invalidateQueries({ queryKey: ['approvals'] }); setRejectTarget(null); setComment(''); },
+  });
+
+  const approveWeekMutation = useMutation({
     mutationFn: (id: string) => api.post(`/approvals/${id}/approve`),
     onSuccess: () => { toast.success('Approved!'); qc.invalidateQueries({ queryKey: ['approvals'] }); },
   });
 
-  const rejectMutation = useMutation({
+  const rejectWeekMutation = useMutation({
     mutationFn: ({ id, comments }: { id: string; comments: string }) => api.post(`/approvals/${id}/reject`, { comments }),
-    onSuccess: () => { toast.success('Rejected'); qc.invalidateQueries({ queryKey: ['approvals'] }); setRejectId(null); setComment(''); },
+    onSuccess: () => { toast.success('Rejected'); qc.invalidateQueries({ queryKey: ['approvals'] }); setRejectTarget(null); setComment(''); },
   });
 
   const bulkApproveMutation = useMutation({
@@ -41,101 +61,211 @@ export default function ApprovalsPage() {
     setSelected(s);
   };
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
+  const handleReject = () => {
+    if (!rejectTarget || !comment.trim()) return;
+    if (rejectTarget.type === 'day') {
+      rejectDayMutation.mutate({ id: rejectTarget.id, comments: comment });
+    } else {
+      rejectWeekMutation.mutate({ id: rejectTarget.id, comments: comment });
+    }
+  };
+
+  const dayCount = dayPending.length;
+  const weekCount = weekPending.length;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Approvals</h1>
-          <p className="text-gray-500 text-sm">{pending.length} pending</p>
+          <p className="text-gray-500 text-sm">{dayCount + weekCount} pending</p>
         </div>
-        {selected.size > 0 && (
+        {tab === 'weeks' && selected.size > 0 && (
           <button onClick={() => bulkApproveMutation.mutate()} disabled={bulkApproveMutation.isPending} className="btn-success">
             <CheckCircleIcon className="h-4 w-4" /> Approve Selected ({selected.size})
           </button>
         )}
       </div>
 
-      {pending.length === 0 ? (
-        <div className="card text-center py-16">
-          <CheckCircleIcon className="h-12 w-12 text-green-400 mx-auto mb-3" />
-          <p className="text-gray-500">All caught up! No pending approvals.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {pending.map((approval: Record<string, unknown>) => {
-            const ts = approval.timesheet as Record<string, unknown>;
-            const user = ts.user as Record<string, unknown>;
-            const isDue = !!(approval.dueDate && new Date(approval.dueDate as string) < new Date());
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button
+          onClick={() => setTab('days')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'days' ? 'border-primary-600 text-primary-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+        >
+          Day Submissions
+          {dayCount > 0 && <span className="ml-2 bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">{dayCount}</span>}
+        </button>
+        <button
+          onClick={() => setTab('weeks')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'weeks' ? 'border-primary-600 text-primary-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+        >
+          Week Submissions
+          {weekCount > 0 && <span className="ml-2 bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">{weekCount}</span>}
+        </button>
+      </div>
 
-            return (
-              <div key={approval.id as string} className={`card p-0 overflow-hidden ${isDue ? 'border-orange-200' : ''}`}>
-                <div className="flex items-center gap-4 p-4">
-                  <input type="checkbox" checked={selected.has(approval.id as string)} onChange={() => toggleSelect(approval.id as string)} className="rounded h-4 w-4" />
+      {/* Day Submissions Tab */}
+      {tab === 'days' && (
+        <>
+          {dayLoading ? (
+            <div className="flex items-center justify-center h-32"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
+          ) : dayPending.length === 0 ? (
+            <div className="card text-center py-16">
+              <CheckCircleIcon className="h-12 w-12 text-green-400 mx-auto mb-3" />
+              <p className="text-gray-500">No pending day submissions.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {dayPending.map((sub: Record<string, unknown>) => {
+                const ts = sub.timesheet as Record<string, unknown>;
+                const user = ts.user as Record<string, unknown>;
+                const dayEntries = (sub.dayEntries as Record<string, unknown>[]) || [];
+                const dayHours = dayEntries.reduce((s: number, e: Record<string, unknown>) => s + (e.hours as number), 0);
+                const submittedAt = sub.submittedAt as string;
 
-                  <div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 flex-shrink-0">
-                    {(user.firstName as string)?.[0]}{(user.lastName as string)?.[0]}
-                  </div>
+                return (
+                  <div key={sub.id as string} className="card p-0 overflow-hidden">
+                    <div className="flex items-center gap-4 p-4">
+                      <div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 flex-shrink-0">
+                        {(user.firstName as string)?.[0]}{(user.lastName as string)?.[0]}
+                      </div>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-gray-900">{user.firstName as string} {user.lastName as string}</p>
-                      <span className="text-gray-400">·</span>
-                      <p className="text-sm text-gray-500">{(user.department as { name: string })?.name}</p>
-                      {isDue && <span className="badge-red">Overdue</span>}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-gray-900">{user.firstName as string} {user.lastName as string}</p>
+                          <span className="text-gray-400">·</span>
+                          <p className="text-sm text-gray-500">{(user.department as { name: string })?.name}</p>
+                        </div>
+                        <p className="text-sm text-gray-600">
+                          <strong>{format(new Date(sub.date as string), 'EEEE, MMM d, yyyy')}</strong>
+                          <span className="ml-2 font-medium">{dayHours.toFixed(1)}h</span>
+                          <span className="ml-2 text-gray-400 text-xs">submitted {format(new Date(submittedAt), 'MMM d, h:mm a')}</span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button onClick={() => approveDayMutation.mutate(sub.id as string)} disabled={approveDayMutation.isPending} className="btn-success btn-sm">
+                          <CheckIcon className="h-4 w-4" /> Approve
+                        </button>
+                        <button onClick={() => setRejectTarget({ id: sub.id as string, type: 'day' })} className="btn-danger btn-sm">
+                          <XMarkIcon className="h-4 w-4" /> Reject
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-600">
-                      {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
-                      <span className="ml-2 font-medium">{(ts.totalHours as number)?.toFixed(1)}h total</span>
-                      {(ts.overtimeHours as number) > 0 && <span className="ml-1 text-orange-600">({(ts.overtimeHours as number)?.toFixed(1)}h OT)</span>}
-                    </p>
-                  </div>
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-xs text-gray-400">{(ts.entries as unknown[])?.length || 0} entries</span>
-                    <button onClick={() => approveMutation.mutate(approval.id as string)} disabled={approveMutation.isPending} className="btn-success btn-sm">
-                      <CheckIcon className="h-4 w-4" /> Approve
-                    </button>
-                    <button onClick={() => setRejectId(approval.id as string)} className="btn-danger btn-sm">
-                      <XMarkIcon className="h-4 w-4" /> Reject
-                    </button>
+                    {dayEntries.length > 0 && (
+                      <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
+                        <div className="flex flex-wrap gap-2">
+                          {dayEntries.map((e: Record<string, unknown>) => (
+                            <span key={e.id as string} className="text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
+                              {(e.project as { name: string })?.name || 'General'}
+                              {(e.task as { name: string })?.name ? ` · ${(e.task as { name: string }).name}` : ''}
+                              {' · '}{(e.hours as number).toFixed(1)}h
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
 
-                {/* Entries summary */}
-                {(ts.entries as unknown[])?.length > 0 && (
-                  <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
-                    <div className="flex flex-wrap gap-2">
-                      {((ts.entries as Record<string, unknown>[]).slice(0, 5)).map((e) => (
-                        <span key={e.id as string} className="text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
-                          {(e.project as { name: string })?.name || 'General'} · {(e.hours as number).toFixed(1)}h
-                        </span>
-                      ))}
-                      {(ts.entries as unknown[]).length > 5 && (
-                        <span className="text-xs text-gray-400">+{(ts.entries as unknown[]).length - 5} more</span>
-                      )}
+      {/* Week Submissions Tab */}
+      {tab === 'weeks' && (
+        <>
+          {weekLoading ? (
+            <div className="flex items-center justify-center h-32"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
+          ) : weekPending.length === 0 ? (
+            <div className="card text-center py-16">
+              <CheckCircleIcon className="h-12 w-12 text-green-400 mx-auto mb-3" />
+              <p className="text-gray-500">No pending week approvals.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {weekPending.map((approval: Record<string, unknown>) => {
+                const ts = approval.timesheet as Record<string, unknown>;
+                const user = ts.user as Record<string, unknown>;
+                const isDue = !!(approval.dueDate && new Date(approval.dueDate as string) < new Date());
+
+                return (
+                  <div key={approval.id as string} className={`card p-0 overflow-hidden ${isDue ? 'border-orange-200' : ''}`}>
+                    <div className="flex items-center gap-4 p-4">
+                      <input type="checkbox" checked={selected.has(approval.id as string)} onChange={() => toggleSelect(approval.id as string)} className="rounded h-4 w-4" />
+
+                      <div className="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 flex-shrink-0">
+                        {(user.firstName as string)?.[0]}{(user.lastName as string)?.[0]}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-gray-900">{user.firstName as string} {user.lastName as string}</p>
+                          <span className="text-gray-400">·</span>
+                          <p className="text-sm text-gray-500">{(user.department as { name: string })?.name}</p>
+                          {isDue && <span className="badge-red">Overdue</span>}
+                        </div>
+                        <p className="text-sm text-gray-600">
+                          {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
+                          <span className="ml-2 font-medium">{(ts.totalHours as number)?.toFixed(1)}h total</span>
+                          {(ts.overtimeHours as number) > 0 && <span className="ml-1 text-orange-600">({(ts.overtimeHours as number)?.toFixed(1)}h OT)</span>}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-xs text-gray-400">{(ts.entries as unknown[])?.length || 0} entries</span>
+                        <button onClick={() => approveWeekMutation.mutate(approval.id as string)} disabled={approveWeekMutation.isPending} className="btn-success btn-sm">
+                          <CheckIcon className="h-4 w-4" /> Approve
+                        </button>
+                        <button onClick={() => setRejectTarget({ id: approval.id as string, type: 'week' })} className="btn-danger btn-sm">
+                          <XMarkIcon className="h-4 w-4" /> Reject
+                        </button>
+                      </div>
                     </div>
+
+                    {(ts.entries as unknown[])?.length > 0 && (
+                      <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
+                        <div className="flex flex-wrap gap-2">
+                          {((ts.entries as Record<string, unknown>[]).slice(0, 5)).map((e) => (
+                            <span key={e.id as string} className="text-xs bg-white border border-gray-200 rounded-full px-2.5 py-1">
+                              {(e.project as { name: string })?.name || 'General'} · {(e.hours as number).toFixed(1)}h
+                            </span>
+                          ))}
+                          {(ts.entries as unknown[]).length > 5 && (
+                            <span className="text-xs text-gray-400">+{(ts.entries as unknown[]).length - 5} more</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* Reject Modal */}
-      {rejectId && (
+      {rejectTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Reject Timesheet</h3>
+            <h3 className="text-lg font-bold text-gray-900 mb-4">
+              Reject {rejectTarget.type === 'day' ? 'Day' : 'Week'} Timesheet
+            </h3>
             <div className="mb-4">
               <label className="label">Reason for rejection *</label>
               <textarea value={comment} onChange={e => setComment(e.target.value)} className="input" rows={3} placeholder="Explain why this timesheet is being rejected..." />
             </div>
             <div className="flex gap-3 justify-end">
-              <button onClick={() => { setRejectId(null); setComment(''); }} className="btn-secondary">Cancel</button>
-              <button onClick={() => rejectMutation.mutate({ id: rejectId, comments: comment })} disabled={!comment.trim() || rejectMutation.isPending} className="btn-danger">
+              <button onClick={() => { setRejectTarget(null); setComment(''); }} className="btn-secondary">Cancel</button>
+              <button
+                onClick={handleReject}
+                disabled={!comment.trim() || rejectDayMutation.isPending || rejectWeekMutation.isPending}
+                className="btn-danger"
+              >
                 Reject
               </button>
             </div>
