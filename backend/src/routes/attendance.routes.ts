@@ -1,4 +1,5 @@
 import { Router, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
@@ -94,12 +95,12 @@ router.get('/my', async (req: AuthRequest, res: Response, next: NextFunction) =>
 router.get('/all', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { from, to, userId } = req.query;
-    const where: Record<string, unknown> = { user: { organizationId: req.user!.organizationId } };
-    if (userId) where.userId = userId;
+    const where: Prisma.AttendanceWhereInput = { user: { organizationId: req.user!.organizationId } };
+    if (userId) where.userId = userId as string;
     if (from || to) {
       where.date = {};
-      if (from) (where.date as Record<string, unknown>).gte = new Date(from as string);
-      if (to) (where.date as Record<string, unknown>).lte = new Date(to as string);
+      if (from) (where.date as Prisma.DateTimeFilter).gte = new Date(from as string);
+      if (to) (where.date as Prisma.DateTimeFilter).lte = new Date(to as string);
     }
     const records = await prisma.attendance.findMany({
       where,
