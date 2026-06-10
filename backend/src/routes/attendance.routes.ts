@@ -95,19 +95,29 @@ router.get('/my', async (req: AuthRequest, res: Response, next: NextFunction) =>
 router.get('/all', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { from, to, userId } = req.query;
-    const where: Prisma.AttendanceWhereInput = { user: { organizationId: req.user!.organizationId } };
+    // Attendance has no direct user relation — filter by userId list from org
+    const orgUsers = await prisma.user.findMany({
+      where: { organizationId: req.user!.organizationId, isActive: true },
+      select: { id: true, firstName: true, lastName: true, employeeId: true },
+    });
+    const orgUserIds = orgUsers.map(u => u.id);
+
+    const where: Prisma.AttendanceWhereInput = { userId: { in: orgUserIds } };
     if (userId) where.userId = userId as string;
     if (from || to) {
-      where.date = {};
+      where.date = {} as Prisma.DateTimeFilter;
       if (from) (where.date as Prisma.DateTimeFilter).gte = new Date(from as string);
       if (to) (where.date as Prisma.DateTimeFilter).lte = new Date(to as string);
     }
-    const records = await prisma.attendance.findMany({
+
+    const attendanceRows = await prisma.attendance.findMany({
       where,
-      include: { user: { select: { id: true, firstName: true, lastName: true, employeeId: true } } },
       orderBy: [{ date: 'desc' }, { userId: 'asc' }],
       take: 500,
     });
+
+    const userMap = new Map(orgUsers.map(u => [u.id, u]));
+    const records = attendanceRows.map(a => ({ ...a, user: userMap.get(a.userId) }));
     res.json(records);
   } catch (err) {
     next(err);
