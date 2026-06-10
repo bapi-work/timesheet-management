@@ -228,7 +228,7 @@ router.get('/balances/all', authorize(...ADMIN_ROLES), async (req: AuthRequest, 
       select: { id: true, firstName: true, lastName: true, employeeId: true, department: { select: { name: true } } },
     });
     const balances = await prisma.leaveBalance.findMany({
-      where: { year, userId: { in: users.map(u => u.id) } },
+      where: { year: y, userId: { in: users.map(u => u.id) } },
     });
     const userMap = new Map(users.map(u => [u.id, u]));
     res.json(balances.map(b => ({ ...b, user: userMap.get(b.userId) })));
