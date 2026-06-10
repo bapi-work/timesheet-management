@@ -99,6 +99,8 @@ router.post('/', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Respon
         organizationId: req.user!.organizationId,
         passwordHash: hash,
         joinDate: data.joinDate ? new Date(data.joinDate) : undefined,
+        departmentId: data.departmentId || undefined,
+        managerId: data.managerId || undefined,
       },
     });
 
@@ -121,7 +123,16 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 
     const updates: Record<string, unknown> = {};
     for (const field of allowedFields) {
-      if (req.body[field] !== undefined) updates[field] = req.body[field];
+      if (req.body[field] === undefined) continue;
+      if ((field === 'joinDate' || field === 'exitDate') && req.body[field]) {
+        updates[field] = new Date(req.body[field]);
+      } else if (field === 'isActive') {
+        updates[field] = req.body[field] === true || req.body[field] === 'true';
+      } else if ((field === 'departmentId' || field === 'managerId') && req.body[field] === '') {
+        updates[field] = null;
+      } else {
+        updates[field] = req.body[field];
+      }
     }
 
     const user = await prisma.user.update({ where: { id: req.params.id }, data: updates });
