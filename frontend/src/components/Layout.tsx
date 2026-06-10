@@ -41,6 +41,7 @@ const MANAGER_NAV = [
 const ANALYTICS_NAV = [{ to: '/analytics', labelKey: 'nav.analytics', icon: ChartBarIcon }];
 const PAYROLL_NAV = [{ to: '/payroll', labelKey: 'nav.payroll', icon: CreditCardIcon }];
 const ADMIN_NAV = [
+  { to: '/departments', labelKey: 'nav.departments', icon: BuildingOffice2Icon },
   { to: '/admin', labelKey: 'nav.admin', icon: CogIcon },
   { to: '/backup', labelKey: 'nav.backup', icon: ArchiveBoxIcon },
 ];

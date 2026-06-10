@@ -63,4 +63,20 @@ router.put('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Resp
   }
 });
 
+router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const dept = await prisma.department.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+      include: { _count: { select: { users: true } } },
+    });
+    if (!dept) throw new AppError('Department not found', 404);
+    if (dept._count.users > 0) throw new AppError('Cannot delete a department with employees. Reassign them first.', 400);
+
+    await prisma.department.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Department deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
