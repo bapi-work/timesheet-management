@@ -80,16 +80,16 @@ export default function App() {
           <Route path="timesheets" element={<TimesheetListPage />} />
           <Route path="timesheets/current" element={<TimesheetPage />} />
           <Route path="timesheets/:id" element={<TimesheetPage />} />
-          <Route path="approvals" element={<ApprovalsPage />} />
+          <Route path="approvals" element={<ManagerRoute><ApprovalsPage /></ManagerRoute>} />
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:id" element={<ProjectDetailPage />} />
-          <Route path="clients" element={<ClientsPage />} />
-          <Route path="clients/:id" element={<ClientDetailPage />} />
-          <Route path="attendance" element={<AttendancePage />} />
+          <Route path="clients" element={<ManagerRoute><ClientsPage /></ManagerRoute>} />
+          <Route path="clients/:id" element={<ManagerRoute><ClientDetailPage /></ManagerRoute>} />
+          <Route path="attendance" element={<HrRoute><AttendancePage /></HrRoute>} />
           <Route path="leave" element={<LeavePage />} />
           <Route path="expenses" element={<ExpensesPage />} />
-          <Route path="invoices" element={<InvoicesPage />} />
+          <Route path="invoices" element={<ManagerRoute><InvoicesPage /></ManagerRoute>} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="teams" element={<ManagerRoute><TeamsPage /></ManagerRoute>} />

@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { format, eachDayOfInterval, isWeekend } from 'date-fns';
+import { format, eachDayOfInterval, isWeekend, startOfWeek, endOfWeek, addWeeks, subWeeks } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import {
-  PlusIcon, TrashIcon, PaperAirplaneIcon, ArrowPathIcon,
+  PlusIcon, TrashIcon, PaperAirplaneIcon,
   ClipboardDocumentListIcon, LockClosedIcon,
+  ChevronLeftIcon, ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 
@@ -25,11 +26,17 @@ export default function TimesheetPage() {
   const qc = useQueryClient();
   const [addingDay, setAddingDay] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // weekOffset: 0 = current week, -1 = last week, 1 = next week, etc.
+  const [weekOffset, setWeekOffset] = useState(0);
 
-  const url = id === 'current' || !id ? '/timesheets/current' : `/timesheets/${id}`;
+  const isCurrent = id === 'current' || !id;
+  const weekBase = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 1 });
+  const url = isCurrent
+    ? `/timesheets/current?week=${format(weekBase, 'yyyy-MM-dd')}`
+    : `/timesheets/${id}`;
 
   const { data: timesheet, isLoading } = useQuery({
-    queryKey: ['timesheet', id],
+    queryKey: ['timesheet', id, weekOffset],
     queryFn: () => api.get(url).then(r => r.data),
   });
 
@@ -38,21 +45,23 @@ export default function TimesheetPage() {
     queryFn: () => api.get('/projects?limit=100').then(r => r.data.projects),
   });
 
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['timesheet', id, weekOffset] });
+
   const submitMutation = useMutation({
     mutationFn: () => api.post(`/timesheets/${timesheet?.id}/submit`),
-    onSuccess: () => { toast.success('Timesheet submitted!'); qc.invalidateQueries({ queryKey: ['timesheet'] }); },
+    onSuccess: () => { toast.success('Timesheet submitted!'); invalidate(); },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
   const copyPrevMutation = useMutation({
     mutationFn: () => api.post(`/timesheets/${timesheet?.id}/copy-previous`),
-    onSuccess: () => { toast.success('Previous week copied!'); qc.invalidateQueries({ queryKey: ['timesheet'] }); },
+    onSuccess: () => { toast.success('Previous week copied!'); invalidate(); },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'No previous timesheet'),
   });
 
   const deleteEntry = useMutation({
     mutationFn: (entryId: string) => api.delete(`/timesheets/${timesheet?.id}/entries/${entryId}`),
-    onSuccess: () => { toast.success('Entry removed'); qc.invalidateQueries({ queryKey: ['timesheet'] }); },
+    onSuccess: () => { toast.success('Entry removed'); invalidate(); },
   });
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
@@ -73,9 +82,27 @@ export default function TimesheetPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Timesheet</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            {format(new Date(timesheet.periodStart), 'MMM d')} – {format(new Date(timesheet.periodEnd), 'MMM d, yyyy')}
-          </p>
+          {isCurrent ? (
+            <div className="flex items-center gap-2 mt-1">
+              <button onClick={() => { setWeekOffset(w => w - 1); setAddingDay(null); }} className="p-1 rounded hover:bg-gray-100 text-gray-500">
+                <ChevronLeftIcon className="h-4 w-4" />
+              </button>
+              <span className="text-gray-500 text-sm">
+                {format(new Date(timesheet.periodStart), 'MMM d')} – {format(new Date(timesheet.periodEnd), 'MMM d, yyyy')}
+                {weekOffset === 0 && <span className="ml-1.5 text-xs text-primary-600 font-medium">(This week)</span>}
+              </span>
+              <button onClick={() => { setWeekOffset(w => w + 1); setAddingDay(null); }} disabled={weekOffset >= 0} className="p-1 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronRightIcon className="h-4 w-4" />
+              </button>
+              {weekOffset !== 0 && (
+                <button onClick={() => { setWeekOffset(0); setAddingDay(null); }} className="text-xs text-primary-600 underline">Today</button>
+              )}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm mt-1">
+              {format(new Date(timesheet.periodStart), 'MMM d')} – {format(new Date(timesheet.periodEnd), 'MMM d, yyyy')}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <span className={statusConfig.cls}>{statusConfig.label}</span>
@@ -191,7 +218,7 @@ export default function TimesheetPage() {
                       timesheetId={timesheet.id}
                       date={format(day, 'yyyy-MM-dd')}
                       projects={projects || []}
-                      onDone={() => { setAddingDay(null); qc.invalidateQueries({ queryKey: ['timesheet'] }); }}
+                      onDone={() => { setAddingDay(null); invalidate(); }}
                       onCancel={() => setAddingDay(null)}
                     />
                   </div>

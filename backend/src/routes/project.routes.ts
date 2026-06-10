@@ -173,6 +173,33 @@ router.post('/:id/tasks', authorize(...MANAGER_ROLES), async (req: AuthRequest, 
   }
 });
 
+router.put('/:id/tasks/:taskId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, description, estimatedHours, isBillable, isActive } = req.body;
+    const task = await prisma.task.update({
+      where: { id: req.params.taskId },
+      data: { name, description, estimatedHours, isBillable, isActive },
+    });
+    res.json(task);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id/tasks/:taskId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const inUse = await prisma.timesheetEntry.count({ where: { taskId: req.params.taskId } });
+    if (inUse > 0) {
+      const task = await prisma.task.update({ where: { id: req.params.taskId }, data: { isActive: false } });
+      return res.json({ message: 'Task deactivated (has timesheet entries)', task });
+    }
+    await prisma.task.delete({ where: { id: req.params.taskId } });
+    res.json({ message: 'Task deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id/utilization', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { from, to } = req.query;

@@ -1,6 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
-import { authenticate, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 
@@ -91,7 +91,29 @@ router.get('/my', async (req: AuthRequest, res: Response, next: NextFunction) =>
   }
 });
 
-router.get('/team', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.get('/all', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { from, to, userId } = req.query;
+    const where: Record<string, unknown> = { user: { organizationId: req.user!.organizationId } };
+    if (userId) where.userId = userId;
+    if (from || to) {
+      where.date = {};
+      if (from) (where.date as Record<string, unknown>).gte = new Date(from as string);
+      if (to) (where.date as Record<string, unknown>).lte = new Date(to as string);
+    }
+    const records = await prisma.attendance.findMany({
+      where,
+      include: { user: { select: { id: true, firstName: true, lastName: true, employeeId: true } } },
+      orderBy: [{ date: 'desc' }, { userId: 'asc' }],
+      take: 500,
+    });
+    res.json(records);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/team', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { date } = req.query;
     const targetDate = date ? new Date(date as string) : new Date();

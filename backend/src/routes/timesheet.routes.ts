@@ -71,9 +71,10 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
 
 router.get('/current', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const now = new Date();
-    const periodStart = startOfWeek(now, { weekStartsOn: 1 });
-    const periodEnd = endOfWeek(now, { weekStartsOn: 1 });
+    // Allow clients to request any specific week by passing ?week=YYYY-MM-DD
+    const base = req.query.week ? new Date(req.query.week as string) : new Date();
+    const periodStart = startOfWeek(base, { weekStartsOn: 1 });
+    const periodEnd = endOfWeek(base, { weekStartsOn: 1 });
 
     let timesheet = await prisma.timesheet.findUnique({
       where: { userId_periodStart_periodEnd: { userId: req.user!.userId, periodStart, periodEnd } },
@@ -155,14 +156,20 @@ router.post('/:id/entries', async (req: AuthRequest, res: Response, next: NextFu
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet) throw new AppError('Timesheet not found', 404);
     if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (['SUBMITTED', 'APPROVED', 'LOCKED'].includes(timesheet.status)) {
-      throw new AppError('Cannot edit a submitted or locked timesheet', 400);
+    if (['APPROVED', 'LOCKED'].includes(timesheet.status)) {
+      throw new AppError('Cannot edit an approved or locked timesheet', 400);
     }
 
     const entries = Array.isArray(req.body) ? req.body : [req.body];
     const validated = entries.map(e => entrySchema.parse(e));
 
     const created = await prisma.$transaction(async (tx) => {
+      // If the timesheet was submitted but user is adding more entries, revert to DRAFT
+      if (timesheet.status === 'SUBMITTED') {
+        await tx.timesheet.update({ where: { id: req.params.id }, data: { status: 'DRAFT', submittedAt: null } });
+        await tx.timesheetApproval.deleteMany({ where: { timesheetId: req.params.id } });
+      }
+
       const newEntries = await Promise.all(
         validated.map(e => tx.timesheetEntry.create({
           data: {

@@ -34,9 +34,13 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { search, isActive, page = '1', limit = '50' } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
+    const isManager = ([...MANAGER_ROLES] as string[]).includes(req.user!.role);
 
     const where: Record<string, unknown> = { organizationId: req.user!.organizationId };
     if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (!isManager) {
+      where.clientMembers = { some: { userId: req.user!.userId } };
+    }
     if (search) {
       where.OR = [
         { name: { contains: search as string, mode: 'insensitive' } },
@@ -64,8 +68,11 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
 
 router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const isManager = ([...MANAGER_ROLES] as string[]).includes(req.user!.role);
+    const where: Record<string, unknown> = { id: req.params.id, organizationId: req.user!.organizationId };
+    if (!isManager) where.clientMembers = { some: { userId: req.user!.userId } };
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, organizationId: req.user!.organizationId },
+      where,
       include: {
         projects: {
           select: { id: true, name: true, code: true, status: true, billable: true },

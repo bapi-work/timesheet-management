@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
 import api from '../lib/api';
-import { ArrowLeftIcon, UserPlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, UserPlusIcon, XMarkIcon, PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import { useAuthStore } from '../store/auth.store';
 import { MANAGEMENT_ROLES, hasRole } from '../lib/roles';
@@ -83,11 +84,97 @@ function AddMemberModal({ projectId, existingMemberIds, onClose }: { projectId: 
   );
 }
 
+interface Task {
+  id: string;
+  name: string;
+  description?: string;
+  estimatedHours?: number;
+  isBillable: boolean;
+  isActive: boolean;
+}
+
+interface TaskFormData {
+  name: string;
+  description: string;
+  estimatedHours: string;
+  isBillable: boolean;
+}
+
+function TaskFormModal({ projectId, task, onClose }: { projectId: string; task?: Task; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { register, handleSubmit, formState: { errors } } = useForm<TaskFormData>({
+    defaultValues: {
+      name: task?.name || '',
+      description: task?.description || '',
+      estimatedHours: task?.estimatedHours ? String(task.estimatedHours) : '',
+      isBillable: task?.isBillable ?? true,
+    },
+  });
+
+  const mutation = useMutation({
+    mutationFn: (data: TaskFormData) => {
+      const payload = {
+        name: data.name,
+        description: data.description || undefined,
+        estimatedHours: data.estimatedHours ? Number(data.estimatedHours) : undefined,
+        isBillable: data.isBillable,
+      };
+      return task
+        ? api.put(`/projects/${projectId}/tasks/${task.id}`, payload)
+        : api.post(`/projects/${projectId}/tasks`, payload);
+    },
+    onSuccess: () => {
+      toast.success(task ? 'Task updated' : 'Task created');
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      onClose();
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Failed'),
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="font-semibold text-gray-900">{task ? 'Edit Task' : 'New Task'}</h3>
+          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400" /></button>
+        </div>
+        <form onSubmit={handleSubmit(d => mutation.mutate(d))} className="p-4 space-y-3">
+          <div>
+            <label className="label">Task Name *</label>
+            <input {...register('name', { required: true })} className={`input ${errors.name ? 'input-error' : ''}`} placeholder="e.g. Frontend development" />
+          </div>
+          <div>
+            <label className="label">Description</label>
+            <input {...register('description')} className="input" placeholder="Optional description" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Estimated Hours</label>
+              <input {...register('estimatedHours')} type="number" step="0.5" className="input" placeholder="e.g. 40" />
+            </div>
+            <div className="flex items-center gap-2 pt-6">
+              <input {...register('isBillable')} type="checkbox" id="isBillable" className="rounded" />
+              <label htmlFor="isBillable" className="text-sm cursor-pointer">Billable</label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={mutation.isPending} className="btn-primary">
+              {mutation.isPending ? 'Saving...' : task ? 'Save Changes' : 'Create Task'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const user = useAuthStore(s => s.user);
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [taskModal, setTaskModal] = useState<{ open: boolean; task?: Task }>({ open: false });
   const qc = useQueryClient();
 
   const { data: project, isLoading } = useQuery({
@@ -107,6 +194,15 @@ export default function ProjectDetailPage() {
       qc.invalidateQueries({ queryKey: ['project', id] });
     },
     onError: () => toast.error('Failed to remove member'),
+  });
+
+  const deleteTask = useMutation({
+    mutationFn: (taskId: string) => api.delete(`/projects/${id}/tasks/${taskId}`),
+    onSuccess: (data) => {
+      toast.success(data.data?.message || 'Task deleted');
+      qc.invalidateQueries({ queryKey: ['project', id] });
+    },
+    onError: () => toast.error('Failed to delete task'),
   });
 
   if (isLoading) return <div className="flex justify-center py-16"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
@@ -203,21 +299,41 @@ export default function ProjectDetailPage() {
 
       {/* Tasks */}
       <div className="card">
-        <h3 className="font-semibold text-gray-900 mb-4">Tasks ({project.tasks?.length || 0})</h3>
-        <div className="space-y-2">
-          {(project.tasks || []).map((task: Record<string, unknown>) => (
-            <div key={task.id as string} className="flex items-center justify-between py-2 border-b last:border-0">
-              <div>
-                <p className="text-sm font-medium text-gray-900">{task.name as string}</p>
-                {!!task.description && <p className="text-xs text-gray-500">{task.description as string}</p>}
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900">Tasks ({project.tasks?.length || 0})</h3>
+          {isManager && (
+            <button onClick={() => setTaskModal({ open: true })} className="btn-primary btn-sm flex items-center gap-1.5">
+              <PlusIcon className="h-4 w-4" /> Add Task
+            </button>
+          )}
+        </div>
+        <div className="space-y-1">
+          {(project.tasks || []).map((task: Task) => (
+            <div key={task.id} className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-gray-50 group">
+              <div className="min-w-0 flex-1">
+                <p className={`text-sm font-medium ${task.isActive ? 'text-gray-900' : 'text-gray-400 line-through'}`}>{task.name}</p>
+                {task.description && <p className="text-xs text-gray-500 truncate">{task.description}</p>}
               </div>
-              <div className="flex items-center gap-2">
-                {!!task.estimatedHours && <span className="text-xs text-gray-400">{task.estimatedHours as number}h est.</span>}
+              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                {task.estimatedHours && <span className="text-xs text-gray-400">{task.estimatedHours}h</span>}
                 <span className={task.isBillable ? 'badge-green' : 'badge-gray'}>{task.isBillable ? 'Billable' : 'Internal'}</span>
+                {isManager && (
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => setTaskModal({ open: true, task })} className="p-1 rounded text-gray-400 hover:text-primary-600 hover:bg-primary-50">
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => { if (confirm(`Delete task "${task.name}"?`)) deleteTask.mutate(task.id); }}
+                      className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
-          {!project.tasks?.length && <p className="text-gray-400 text-sm">No tasks defined</p>}
+          {!project.tasks?.length && <p className="text-gray-400 text-sm py-2">No tasks defined</p>}
         </div>
       </div>
 
@@ -226,6 +342,14 @@ export default function ProjectDetailPage() {
           projectId={id!}
           existingMemberIds={memberIds}
           onClose={() => setShowAddMember(false)}
+        />
+      )}
+
+      {taskModal.open && (
+        <TaskFormModal
+          projectId={id!}
+          task={taskModal.task}
+          onClose={() => setTaskModal({ open: false })}
         />
       )}
     </div>

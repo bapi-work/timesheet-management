@@ -18,21 +18,22 @@ import clsx from 'clsx';
 import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from '../lib/roles';
 import TimerWidget from './TimerWidget';
 
+// Visible to all authenticated users
 const NAV_ITEMS = [
   { to: '/dashboard', labelKey: 'nav.dashboard', icon: HomeIcon },
   { to: '/timesheets/current', labelKey: 'nav.myTimesheet', icon: ClockIcon },
-  { to: '/timesheets', labelKey: 'nav.allTimesheets', icon: ClockIcon },
-  { to: '/approvals', labelKey: 'nav.approvals', icon: CheckCircleIcon },
   { to: '/calendar', labelKey: 'nav.calendar', icon: CalendarIcon },
-  { to: '/projects', labelKey: 'nav.projects', icon: FolderIcon },
-  { to: '/clients', labelKey: 'nav.clients', icon: BuildingOffice2Icon },
-  { to: '/attendance', labelKey: 'nav.attendance', icon: CalendarIcon },
   { to: '/leave', labelKey: 'nav.leave', icon: CalendarIcon },
   { to: '/expenses', labelKey: 'nav.expenses', icon: ReceiptRefundIcon },
-  { to: '/invoices', labelKey: 'nav.invoices', icon: CurrencyDollarIcon },
+  { to: '/projects', labelKey: 'nav.projects', icon: FolderIcon },
 ];
 
+// Managers and above
 const MANAGER_NAV = [
+  { to: '/timesheets', labelKey: 'nav.allTimesheets', icon: ClockIcon },
+  { to: '/approvals', labelKey: 'nav.approvals', icon: CheckCircleIcon },
+  { to: '/clients', labelKey: 'nav.clients', icon: BuildingOffice2Icon },
+  { to: '/invoices', labelKey: 'nav.invoices', icon: CurrencyDollarIcon },
   { to: '/employees', labelKey: 'nav.employees', icon: UsersIcon },
   { to: '/teams', labelKey: 'nav.teams', icon: UserGroupIcon },
   { to: '/reports', labelKey: 'nav.reports', icon: DocumentChartBarIcon },
@@ -40,7 +41,9 @@ const MANAGER_NAV = [
 
 const ANALYTICS_NAV = [{ to: '/analytics', labelKey: 'nav.analytics', icon: ChartBarIcon }];
 const PAYROLL_NAV = [{ to: '/payroll', labelKey: 'nav.payroll', icon: CreditCardIcon }];
+// HR Admin and System Admin
 const HR_NAV = [
+  { to: '/attendance', labelKey: 'nav.attendance', icon: CalendarIcon },
   { to: '/departments', labelKey: 'nav.departments', icon: BuildingOffice2Icon },
 ];
 

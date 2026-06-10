@@ -1,7 +1,10 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import prisma from '../utils/prisma';
-import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
+
+// Invoice access: only managers and above (HR, DM, PM, TL, System Admin)
+const INVOICE_ROLES = [...new Set([...ADMIN_ROLES, ...MANAGER_ROLES])];
 import { AppError } from '../middleware/error.middleware';
 
 const router = Router();
@@ -37,7 +40,7 @@ function calcTotals(items: { quantity: number; unitPrice: number }[], taxRate: n
 }
 
 // GET /api/invoices
-router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.get('/', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { status, clientId, page = '1', limit = '20' } = req.query as Record<string, string>;
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -67,7 +70,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
 });
 
 // GET /api/invoices/:id
-router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.get('/:id', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const invoice = await prisma.invoice.findFirst({
       where: { id: req.params.id, organizationId: req.user!.organizationId },
@@ -84,7 +87,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 });
 
 // POST /api/invoices
-router.post('/', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = invoiceSchema.parse(req.body);
 
@@ -127,7 +130,7 @@ router.post('/', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (req: AuthRe
 });
 
 // PUT /api/invoices/:id
-router.put('/:id', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.put('/:id', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const existing = await prisma.invoice.findFirst({
       where: { id: req.params.id, organizationId: req.user!.organizationId },
@@ -202,7 +205,7 @@ router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: R
 });
 
 // GET /api/invoices/:id/summary — stats
-router.get('/stats/summary', async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.get('/stats/summary', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const orgId = req.user!.organizationId;
     const [draft, sent, paid, overdue, cancelled] = await Promise.all([
