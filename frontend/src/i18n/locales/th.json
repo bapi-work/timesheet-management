@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "แดชบอร์ด",
     "myTimesheet": "ใบบันทึกเวลาของฉัน",
+    "timesheetHistory": "ประวัติใบบันทึกเวลา",
     "allTimesheets": "ใบบันทึกเวลาทั้งหมด",
     "approvals": "การอนุมัติ",
     "projects": "โครงการ",

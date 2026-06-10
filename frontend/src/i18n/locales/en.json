@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "myTimesheet": "My Timesheet",
+    "timesheetHistory": "Timesheet History",
     "allTimesheets": "All Timesheets",
     "approvals": "Approvals",
     "projects": "Projects",

@@ -27,7 +27,7 @@ import InvoicesPage from './pages/InvoicesPage';
 import BackupPage from './pages/BackupPage';
 import TeamsPage from './pages/TeamsPage';
 import DepartmentsPage from './pages/DepartmentsPage';
-import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from './lib/roles';
+import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, SENIOR_MANAGER_ROLES, PAYROLL_ROLES, hasRole } from './lib/roles';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
@@ -52,6 +52,13 @@ function ManagerRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore(s => s.user);
   if (!user) return <Navigate to="/login" replace />;
   if (!hasRole(user.role, MANAGEMENT_ROLES)) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function SeniorManagerRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore(s => s.user);
+  if (!user) return <Navigate to="/login" replace />;
+  if (!hasRole(user.role, SENIOR_MANAGER_ROLES)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -84,19 +91,19 @@ export default function App() {
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:id" element={<ProjectDetailPage />} />
-          <Route path="clients" element={<ManagerRoute><ClientsPage /></ManagerRoute>} />
-          <Route path="clients/:id" element={<ManagerRoute><ClientDetailPage /></ManagerRoute>} />
+          <Route path="clients" element={<SeniorManagerRoute><ClientsPage /></SeniorManagerRoute>} />
+          <Route path="clients/:id" element={<SeniorManagerRoute><ClientDetailPage /></SeniorManagerRoute>} />
           <Route path="attendance" element={<HrRoute><AttendancePage /></HrRoute>} />
           <Route path="leave" element={<LeavePage />} />
           <Route path="expenses" element={<ExpensesPage />} />
-          <Route path="invoices" element={<ManagerRoute><InvoicesPage /></ManagerRoute>} />
+          <Route path="invoices" element={<SeniorManagerRoute><InvoicesPage /></SeniorManagerRoute>} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="profile" element={<ProfilePage />} />
-          <Route path="teams" element={<ManagerRoute><TeamsPage /></ManagerRoute>} />
+          <Route path="teams" element={<SeniorManagerRoute><TeamsPage /></SeniorManagerRoute>} />
           <Route path="departments" element={<HrRoute><DepartmentsPage /></HrRoute>} />
-          <Route path="employees" element={<ManagerRoute><EmployeesPage /></ManagerRoute>} />
-          <Route path="employees/:id" element={<ManagerRoute><EmployeeDetailPage /></ManagerRoute>} />
-          <Route path="reports" element={<ManagerRoute><ReportsPage /></ManagerRoute>} />
+          <Route path="employees" element={<SeniorManagerRoute><EmployeesPage /></SeniorManagerRoute>} />
+          <Route path="employees/:id" element={<SeniorManagerRoute><EmployeeDetailPage /></SeniorManagerRoute>} />
+          <Route path="reports" element={<SeniorManagerRoute><ReportsPage /></SeniorManagerRoute>} />
           <Route path="analytics" element={<AnalyticsRoute><AnalyticsPage /></AnalyticsRoute>} />
           <Route path="payroll" element={<PayrollRoute><PayrollPage /></PayrollRoute>} />
           <Route path="admin" element={<AdminRoute><AdminPage /></AdminRoute>} />

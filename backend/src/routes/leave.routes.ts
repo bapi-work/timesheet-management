@@ -1,6 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
-import { authenticate, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 import { notificationQueue } from '../services/queue.service';
@@ -182,6 +182,72 @@ router.get('/holidays', async (req: AuthRequest, res: Response, next: NextFuncti
       orderBy: { date: 'asc' },
     });
     res.json(holidays);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HR Admin: create holiday
+router.post('/holidays', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, date, isOptional } = req.body;
+    if (!name || !date) throw new AppError('name and date are required', 400);
+    const holiday = await prisma.holiday.create({
+      data: {
+        organizationId: req.user!.organizationId,
+        name,
+        date: new Date(date),
+        isOptional: !!isOptional,
+      },
+    });
+    res.status(201).json(holiday);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HR Admin: delete holiday
+router.delete('/holidays/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const holiday = await prisma.holiday.findUnique({ where: { id: req.params.id } });
+    if (!holiday || holiday.organizationId !== req.user!.organizationId) throw new AppError('Not found', 404);
+    await prisma.holiday.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HR Admin: get all leave balances for the org
+router.get('/balances/all', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { year } = req.query;
+    const y = year ? Number(year) : new Date().getFullYear();
+    const users = await prisma.user.findMany({
+      where: { organizationId: req.user!.organizationId, isActive: true },
+      select: { id: true, firstName: true, lastName: true, employeeId: true, department: { select: { name: true } } },
+    });
+    const balances = await prisma.leaveBalance.findMany({
+      where: { year, userId: { in: users.map(u => u.id) } },
+    });
+    const userMap = new Map(users.map(u => [u.id, u]));
+    res.json(balances.map(b => ({ ...b, user: userMap.get(b.userId) })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HR Admin: set/update leave balance for a user
+router.put('/balances', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { userId, leaveType, year, entitled } = req.body;
+    if (!userId || !leaveType || !year || entitled === undefined) throw new AppError('userId, leaveType, year, entitled are required', 400);
+    const balance = await prisma.leaveBalance.upsert({
+      where: { userId_leaveType_year: { userId, leaveType, year: Number(year) } },
+      update: { entitled: Number(entitled) },
+      create: { userId, leaveType, year: Number(year), entitled: Number(entitled), used: 0 },
+    });
+    res.json(balance);
   } catch (err) {
     next(err);
   }

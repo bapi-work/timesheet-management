@@ -15,23 +15,27 @@ import {
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import clsx from 'clsx';
-import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, PAYROLL_ROLES, hasRole } from '../lib/roles';
+import { SYSTEM_ADMIN_ROLES, ADMIN_ROLES, ANALYTICS_ROLES, MANAGEMENT_ROLES, SENIOR_MANAGER_ROLES, PAYROLL_ROLES, hasRole } from '../lib/roles';
 import TimerWidget from './TimerWidget';
 
 // Visible to all authenticated users
 const NAV_ITEMS = [
   { to: '/dashboard', labelKey: 'nav.dashboard', icon: HomeIcon },
   { to: '/timesheets/current', labelKey: 'nav.myTimesheet', icon: ClockIcon },
+  { to: '/timesheets', labelKey: 'nav.timesheetHistory', icon: DocumentChartBarIcon },
   { to: '/calendar', labelKey: 'nav.calendar', icon: CalendarIcon },
   { to: '/leave', labelKey: 'nav.leave', icon: CalendarIcon },
   { to: '/expenses', labelKey: 'nav.expenses', icon: ReceiptRefundIcon },
   { to: '/projects', labelKey: 'nav.projects', icon: FolderIcon },
 ];
 
-// Managers and above
-const MANAGER_NAV = [
-  { to: '/timesheets', labelKey: 'nav.allTimesheets', icon: ClockIcon },
+// All managers including TEAM_LEAD — approvals only
+const APPROVALS_NAV = [
   { to: '/approvals', labelKey: 'nav.approvals', icon: CheckCircleIcon },
+];
+
+// Senior managers only (DEPT_MANAGER, PROJECT_MANAGER, HR_ADMIN, SYSTEM_ADMIN) — NOT TEAM_LEAD
+const SENIOR_MANAGER_NAV = [
   { to: '/clients', labelKey: 'nav.clients', icon: BuildingOffice2Icon },
   { to: '/invoices', labelKey: 'nav.invoices', icon: CurrencyDollarIcon },
   { to: '/employees', labelKey: 'nav.employees', icon: UsersIcon },
@@ -105,6 +109,7 @@ export default function Layout() {
   const { branding } = useBranding();
 
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
+  const isSeniorManager = hasRole(user?.role, SENIOR_MANAGER_ROLES);
   const canViewAnalytics = hasRole(user?.role, ANALYTICS_ROLES);
   const canRunPayroll = hasRole(user?.role, PAYROLL_ROLES);
   const isHrAdmin = hasRole(user?.role, ADMIN_ROLES);
@@ -156,7 +161,8 @@ export default function Layout() {
             <div className="pt-3 pb-1">
               <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Management</p>
             </div>
-            {MANAGER_NAV.map(item => <NavItem key={item.to} {...item} />)}
+            {APPROVALS_NAV.map(item => <NavItem key={item.to} {...item} />)}
+            {isSeniorManager && SENIOR_MANAGER_NAV.map(item => <NavItem key={item.to} {...item} />)}
           </>
         )}
 

@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { format } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { PlusIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, CalendarDaysIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
 
@@ -13,27 +13,55 @@ const LEAVE_COLORS: Record<string, string> = {
   PATERNITY: 'badge-purple', UNPAID: 'badge-gray', COMPENSATORY: 'badge-green', OTHER: 'badge-yellow',
 };
 
+const LEAVE_TYPES = ['ANNUAL', 'SICK', 'MATERNITY', 'PATERNITY', 'UNPAID', 'COMPENSATORY', 'OTHER'];
+
+type Tab = 'my' | 'team' | 'admin';
+
 export default function LeavePage() {
   const qc = useQueryClient();
   const user = useAuthStore(s => s.user);
   const [showModal, setShowModal] = useState(false);
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [balanceTarget, setBalanceTarget] = useState<{ userId: string; name: string; leaveType: string; current: number } | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<string | null>(null);
+  const [rejectComment, setRejectComment] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
-  const isLeaveAdmin = hasRole(user?.role, ADMIN_ROLES);
-  const canSeeTeamLeave = isLeaveAdmin || user?.role === 'DEPARTMENT_MANAGER';
+  const { register: registerHoliday, handleSubmit: handleSubmitHoliday, reset: resetHoliday } = useForm();
+  const { register: registerBalance, handleSubmit: handleSubmitBalance, reset: resetBalance, setValue } = useForm();
+
+  const isHrAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const canSeeTeamLeave = isHrAdmin || user?.role === 'DEPARTMENT_MANAGER' || user?.role === 'PROJECT_MANAGER' || user?.role === 'TEAM_LEAD';
+
+  const defaultTab: Tab = isHrAdmin ? 'admin' : canSeeTeamLeave ? 'team' : 'my';
+  const [tab, setTab] = useState<Tab>(defaultTab);
 
   const { data: balances = [] } = useQuery({
     queryKey: ['leave', 'balance'],
     queryFn: () => api.get('/leave/balance').then(r => r.data),
   });
 
-  const { data: requests = [] } = useQuery({
-    queryKey: ['leave', 'requests'],
-    queryFn: () => api.get('/leave/requests').then(r => r.data),
+  // For employees, backend returns only their own requests. For managers it returns all.
+  // We always fetch and then filter for "my" view.
+  const { data: allVisibleRequests = [] } = useQuery({
+    queryKey: ['leave', 'requests', statusFilter],
+    queryFn: () => api.get(`/leave/requests${statusFilter ? `?status=${statusFilter}` : ''}`).then(r => r.data),
   });
+
+  const myRequests = (allVisibleRequests as Record<string, unknown>[]).filter(r => r.userId === user?.id);
+  const teamRequests = allVisibleRequests as Record<string, unknown>[];
 
   const { data: holidays = [] } = useQuery({
     queryKey: ['leave', 'holidays'],
     queryFn: () => api.get('/leave/holidays').then(r => r.data),
+  });
+
+  const { data: allBalances = [] } = useQuery({
+    queryKey: ['leave', 'all-balances'],
+    queryFn: () => api.get('/leave/balances/all').then(r => r.data),
+    enabled: isHrAdmin,
   });
 
   const createMutation = useMutation({
@@ -55,9 +83,77 @@ export default function LeavePage() {
 
   const rejectMutation = useMutation({
     mutationFn: ({ id, comments }: { id: string; comments: string }) => api.post(`/leave/requests/${id}/reject`, { comments }),
-    onSuccess: () => { toast.success('Leave rejected'); qc.invalidateQueries({ queryKey: ['leave'] }); },
+    onSuccess: () => { toast.success('Leave rejected'); qc.invalidateQueries({ queryKey: ['leave'] }); setRejectTarget(null); setRejectComment(''); },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to reject'),
   });
+
+  const createHolidayMutation = useMutation({
+    mutationFn: (data: Record<string, unknown>) => api.post('/leave/holidays', data),
+    onSuccess: () => { toast.success('Holiday added'); qc.invalidateQueries({ queryKey: ['leave', 'holidays'] }); setShowHolidayModal(false); resetHoliday(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
+  const deleteHolidayMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/leave/holidays/${id}`),
+    onSuccess: () => { toast.success('Holiday removed'); qc.invalidateQueries({ queryKey: ['leave', 'holidays'] }); },
+  });
+
+  const updateBalanceMutation = useMutation({
+    mutationFn: (data: Record<string, unknown>) => api.put('/leave/balances', data),
+    onSuccess: () => { toast.success('Balance updated'); qc.invalidateQueries({ queryKey: ['leave', 'all-balances'] }); setShowBalanceModal(false); resetBalance(); setBalanceTarget(null); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
+  const openBalanceModal = (userId: string, name: string, leaveType: string, current: number) => {
+    setBalanceTarget({ userId, name, leaveType, current });
+    setValue('entitled', current);
+    setShowBalanceModal(true);
+  };
+
+  const pendingTeam = (teamRequests as Record<string, unknown>[]).filter(r => r.status === 'PENDING' && r.userId !== user?.id);
+
+  const renderRequest = (req: Record<string, unknown>, showUser: boolean, canReview: boolean) => {
+    const isOwnRequest = req.userId === user?.id;
+    return (
+      <div key={req.id as string} className="card p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <CalendarDaysIcon className="h-8 w-8 text-gray-300" />
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={LEAVE_COLORS[req.leaveType as string] || 'badge-gray'}>{(req.leaveType as string).replace(/_/g, ' ')}</span>
+                <span className={req.status === 'APPROVED' ? 'badge-green' : req.status === 'REJECTED' ? 'badge-red' : req.status === 'CANCELLED' ? 'badge-gray' : 'badge-yellow'}>
+                  {req.status as string}
+                </span>
+              </div>
+              {showUser && !!(req.user) && (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {(req.user as { firstName: string; lastName: string }).firstName} {(req.user as { firstName: string; lastName: string }).lastName}
+                </p>
+              )}
+              <p className="text-sm text-gray-700 mt-1">
+                {format(new Date(req.startDate as string), 'MMM d')} – {format(new Date(req.endDate as string), 'MMM d, yyyy')}
+                <span className="ml-2 text-gray-500">({req.days as number} day{(req.days as number) !== 1 ? 's' : ''})</span>
+              </p>
+              {!!(req.reason) && <p className="text-xs text-gray-400 mt-0.5">{req.reason as string}</p>}
+              {!!(req.approverComments) && <p className="text-xs text-orange-600 mt-0.5">"{req.approverComments as string}"</p>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {req.status === 'PENDING' && isOwnRequest && (
+              <button onClick={() => cancelMutation.mutate(req.id as string)} className="btn-secondary btn-sm">Cancel</button>
+            )}
+            {canReview && req.status === 'PENDING' && !isOwnRequest && (
+              <>
+                <button onClick={() => approveMutation.mutate({ id: req.id as string })} disabled={approveMutation.isPending} className="btn-success btn-sm">Approve</button>
+                <button onClick={() => setRejectTarget(req.id as string)} className="btn-danger btn-sm">Reject</button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -68,104 +164,189 @@ export default function LeavePage() {
         </button>
       </div>
 
-      {/* Leave Balances */}
-      {balances.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {balances.map((b: Record<string, unknown>) => (
-            <div key={b.id as string} className="card text-center">
-              <p className="text-sm text-gray-500">{(b.leaveType as string).replace(/_/g, ' ')}</p>
-              <p className="text-3xl font-bold text-gray-900 mt-1">{(b.entitled as number) - (b.used as number)}</p>
-              <p className="text-xs text-gray-400">{b.used as number} used of {b.entitled as number}</p>
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button onClick={() => setTab('my')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'my' ? 'border-primary-600 text-primary-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+          My Leave
+        </button>
+        {canSeeTeamLeave && (
+          <button onClick={() => setTab('team')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'team' ? 'border-primary-600 text-primary-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Team Leave
+            {pendingTeam.length > 0 && <span className="ml-2 bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">{pendingTeam.length}</span>}
+          </button>
+        )}
+        {isHrAdmin && (
+          <button onClick={() => setTab('admin')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'admin' ? 'border-primary-600 text-primary-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            HR Admin
+          </button>
+        )}
+      </div>
+
+      {/* My Leave Tab */}
+      {tab === 'my' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-4">
+            {/* Leave Balances */}
+            {balances.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {(balances as Record<string, unknown>[]).map((b) => (
+                  <div key={b.id as string} className="card text-center py-3">
+                    <p className="text-xs text-gray-500">{(b.leaveType as string).replace(/_/g, ' ')}</p>
+                    <p className="text-3xl font-bold text-gray-900 mt-1">{(b.entitled as number) - (b.used as number)}</p>
+                    <p className="text-xs text-gray-400">{b.used as number} used of {b.entitled as number}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <h2 className="font-semibold text-gray-900">My Leave Requests</h2>
+            {myRequests.length === 0
+              ? <div className="card text-center py-10 text-gray-400">No leave requests yet</div>
+              : (myRequests as Record<string, unknown>[]).map(req => renderRequest(req, false, false))
+            }
+          </div>
+          {/* Upcoming Holidays */}
+          <div>
+            <h2 className="font-semibold text-gray-900 mb-3">Upcoming Holidays</h2>
+            <div className="card p-0 overflow-hidden">
+              {(holidays as Record<string, unknown>[]).slice(0, 10).map((h) => (
+                <div key={h.id as string} className="flex items-center gap-3 px-4 py-3 border-b last:border-0 hover:bg-gray-50">
+                  <div className="text-center w-10">
+                    <p className="text-xs text-gray-500">{format(new Date(h.date as string), 'MMM')}</p>
+                    <p className="text-lg font-bold text-gray-900">{format(new Date(h.date as string), 'd')}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{h.name as string}</p>
+                    {!!(h.isOptional) && <span className="badge-yellow text-xs">Optional</span>}
+                  </div>
+                </div>
+              ))}
+              {holidays.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">No holidays configured</p>}
             </div>
-          ))}
+          </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Requests */}
-        <div className="lg:col-span-2 space-y-3">
-          <h2 className="font-semibold text-gray-900">{canSeeTeamLeave ? 'Leave Requests' : 'My Leave Requests'}</h2>
-          {requests.length === 0 ? (
-            <div className="card text-center py-10 text-gray-400">No leave requests yet</div>
-          ) : (
-            requests.map((req: Record<string, unknown>) => {
-              const isOwnRequest = req.userId === user?.id;
-              const canReviewRequest = req.status === 'PENDING' && !isOwnRequest && (
-                isLeaveAdmin || (req.approver as { id?: string } | undefined)?.id === user?.id
-              );
-
-              return (
-              <div key={req.id as string} className="card p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <CalendarDaysIcon className="h-8 w-8 text-gray-300" />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className={LEAVE_COLORS[req.leaveType as string] || 'badge-gray'}>{(req.leaveType as string).replace(/_/g, ' ')}</span>
-                        <span className={req.status === 'APPROVED' ? 'badge-green' : req.status === 'REJECTED' ? 'badge-red' : req.status === 'CANCELLED' ? 'badge-gray' : 'badge-yellow'}>
-                          {req.status as string}
-                        </span>
-                      </div>
-                      {canSeeTeamLeave && !!req.user && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          {(req.user as { firstName: string; lastName: string }).firstName} {(req.user as { firstName: string; lastName: string }).lastName}
-                        </p>
-                      )}
-                      <p className="text-sm text-gray-700 mt-1">
-                        {format(new Date(req.startDate as string), 'MMM d')} – {format(new Date(req.endDate as string), 'MMM d, yyyy')}
-                        <span className="ml-2 text-gray-500">({req.days as number} day{(req.days as number) !== 1 ? 's' : ''})</span>
-                      </p>
-                      {!!req.reason && <p className="text-xs text-gray-400 mt-0.5">{req.reason as string}</p>}
-                      {!!req.approverComments && <p className="text-xs text-orange-600 mt-0.5">"{req.approverComments as string}"</p>}
-                    </div>
-                  </div>
-                  {req.status === 'PENDING' && isOwnRequest && (
-                    <button onClick={() => cancelMutation.mutate(req.id as string)} className="btn-secondary btn-sm">Cancel</button>
-                  )}
-                  {canReviewRequest && (
-                    <div className="flex gap-2">
-                      <button onClick={() => approveMutation.mutate({ id: req.id as string })} disabled={approveMutation.isPending} className="btn-success btn-sm">Approve</button>
-                      <button
-                        onClick={() => {
-                          const comments = prompt('Reason for rejection?');
-                          if (comments?.trim()) rejectMutation.mutate({ id: req.id as string, comments });
-                        }}
-                        disabled={rejectMutation.isPending}
-                        className="btn-danger btn-sm"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Upcoming Holidays */}
-        <div>
-          <h2 className="font-semibold text-gray-900 mb-3">Upcoming Holidays</h2>
-          <div className="card p-0 overflow-hidden">
-            {holidays.slice(0, 10).map((h: Record<string, unknown>) => (
-              <div key={h.id as string} className="flex items-center gap-3 px-4 py-3 border-b last:border-0 hover:bg-gray-50">
-                <div className="text-center w-10">
-                  <p className="text-xs text-gray-500">{format(new Date(h.date as string), 'MMM')}</p>
-                  <p className="text-lg font-bold text-gray-900">{format(new Date(h.date as string), 'd')}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{h.name as string}</p>
-                  {!!h.isOptional && <span className="badge-yellow text-xs">Optional</span>}
-                </div>
-              </div>
+      {/* Team Leave Tab */}
+      {tab === 'team' && canSeeTeamLeave && (
+        <div className="space-y-4">
+          <div className="flex gap-2 flex-wrap">
+            {['', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${statusFilter === s ? 'bg-primary-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                {s || 'All'}
+              </button>
             ))}
-            {holidays.length === 0 && <p className="text-center text-gray-400 py-6 text-sm">No holidays configured</p>}
+          </div>
+          {(teamRequests as Record<string, unknown>[]).filter(r => r.userId !== user?.id).length === 0
+            ? <div className="card text-center py-10 text-gray-400">No leave requests</div>
+            : (teamRequests as Record<string, unknown>[])
+                .filter(r => r.userId !== user?.id)
+                .map(req => renderRequest(req, true, true))
+          }
+        </div>
+      )}
+
+      {/* HR Admin Tab */}
+      {tab === 'admin' && isHrAdmin && (
+        <div className="space-y-8">
+          {/* All Leave Requests */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-gray-900">All Leave Requests</h2>
+              <div className="flex gap-2">
+                {['', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].map(s => (
+                  <button key={s} onClick={() => setStatusFilter(s)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${statusFilter === s ? 'bg-primary-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    {s || 'All'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(teamRequests as Record<string, unknown>[]).length === 0
+              ? <div className="card text-center py-10 text-gray-400">No leave requests</div>
+              : (teamRequests as Record<string, unknown>[]).map(req => renderRequest(req, true, true))
+            }
+          </div>
+
+          {/* Leave Balances Management */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-gray-900">Leave Balances</h2>
+              <span className="text-sm text-gray-500">{new Date().getFullYear()}</span>
+            </div>
+            {(allBalances as Record<string, unknown>[]).length === 0 ? (
+              <div className="card text-center py-8 text-gray-400">No leave balances configured. Approve leave requests to create them, or set entitlements manually.</div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th className="th">Employee</th>
+                      <th className="th">Leave Type</th>
+                      <th className="th">Entitled</th>
+                      <th className="th">Used</th>
+                      <th className="th">Remaining</th>
+                      <th className="th"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {(allBalances as Record<string, unknown>[]).map((b) => {
+                      const u = b.user as { firstName: string; lastName: string } | undefined;
+                      const remaining = (b.entitled as number) - (b.used as number);
+                      return (
+                        <tr key={b.id as string} className="tr-hover">
+                          <td className="td font-medium">{u?.firstName} {u?.lastName}</td>
+                          <td className="td"><span className={LEAVE_COLORS[b.leaveType as string] || 'badge-gray'}>{(b.leaveType as string).replace(/_/g, ' ')}</span></td>
+                          <td className="td">{b.entitled as number}</td>
+                          <td className="td">{b.used as number}</td>
+                          <td className="td">
+                            <span className={remaining < 0 ? 'text-red-600 font-semibold' : remaining === 0 ? 'text-orange-500' : 'text-green-600'}>{remaining}</span>
+                          </td>
+                          <td className="td">
+                            <button onClick={() => openBalanceModal(b.userId as string, `${u?.firstName} ${u?.lastName}`, b.leaveType as string, b.entitled as number)} className="btn-secondary btn-sm">Edit</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Holiday Management */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-gray-900">Public Holidays</h2>
+              <button onClick={() => setShowHolidayModal(true)} className="btn-primary btn-sm">
+                <PlusIcon className="h-4 w-4" /> Add Holiday
+              </button>
+            </div>
+            <div className="card p-0 overflow-hidden">
+              {(holidays as Record<string, unknown>[]).length === 0 && (
+                <p className="text-center text-gray-400 py-6 text-sm">No holidays configured</p>
+              )}
+              {(holidays as Record<string, unknown>[]).map((h) => (
+                <div key={h.id as string} className="flex items-center gap-3 px-4 py-3 border-b last:border-0 hover:bg-gray-50">
+                  <div className="text-center w-12 flex-shrink-0">
+                    <p className="text-xs text-gray-500">{format(new Date(h.date as string), 'MMM')}</p>
+                    <p className="text-lg font-bold text-gray-900">{format(new Date(h.date as string), 'd')}</p>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900">{h.name as string}</p>
+                    {!!(h.isOptional) && <span className="badge-yellow text-xs">Optional</span>}
+                  </div>
+                  <button onClick={() => { if (confirm(`Remove "${h.name}"?`)) deleteHolidayMutation.mutate(h.id as string); }} className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50">
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Request Modal */}
+      {/* Request Leave Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -175,9 +356,7 @@ export default function LeavePage() {
                 <label className="label">Leave Type *</label>
                 <select {...register('leaveType', { required: true })} className={`input ${errors.leaveType ? 'input-error' : ''}`}>
                   <option value="">Select type</option>
-                  {['ANNUAL', 'SICK', 'MATERNITY', 'PATERNITY', 'UNPAID', 'COMPENSATORY', 'OTHER'].map(t => (
-                    <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
-                  ))}
+                  {LEAVE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -199,6 +378,70 @@ export default function LeavePage() {
                 <button type="submit" disabled={createMutation.isPending} className="btn-primary">Submit Request</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Holiday Modal */}
+      {showHolidayModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900 mb-5">Add Public Holiday</h3>
+            <form onSubmit={handleSubmitHoliday(d => createHolidayMutation.mutate(d as Record<string, unknown>))} className="space-y-4">
+              <div>
+                <label className="label">Holiday Name *</label>
+                <input {...registerHoliday('name', { required: true })} type="text" className="input" placeholder="e.g. New Year's Day" />
+              </div>
+              <div>
+                <label className="label">Date *</label>
+                <input {...registerHoliday('date', { required: true })} type="date" className="input" />
+              </div>
+              <div className="flex items-center gap-2">
+                <input {...registerHoliday('isOptional')} type="checkbox" id="isOptional" className="rounded" />
+                <label htmlFor="isOptional" className="text-sm text-gray-700">Optional holiday</label>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => { setShowHolidayModal(false); resetHoliday(); }} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={createHolidayMutation.isPending} className="btn-primary">Add Holiday</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Balance Modal */}
+      {showBalanceModal && balanceTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Edit Leave Balance</h3>
+            <p className="text-sm text-gray-500 mb-5">{balanceTarget.name} · {balanceTarget.leaveType.replace(/_/g, ' ')}</p>
+            <form onSubmit={handleSubmitBalance(d => updateBalanceMutation.mutate({ userId: balanceTarget.userId, leaveType: balanceTarget.leaveType, year: new Date().getFullYear(), ...d }))} className="space-y-4">
+              <div>
+                <label className="label">Entitled Days *</label>
+                <input {...registerBalance('entitled', { required: true, min: 0 })} type="number" className="input" min={0} />
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => { setShowBalanceModal(false); setBalanceTarget(null); resetBalance(); }} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={updateBalanceMutation.isPending} className="btn-primary">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Reject Leave Request</h3>
+            <div className="mb-4">
+              <label className="label">Reason for rejection *</label>
+              <textarea value={rejectComment} onChange={e => setRejectComment(e.target.value)} className="input" rows={3} placeholder="Explain why..." />
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setRejectTarget(null); setRejectComment(''); }} className="btn-secondary">Cancel</button>
+              <button onClick={() => { if (rejectTarget && rejectComment.trim()) rejectMutation.mutate({ id: rejectTarget, comments: rejectComment }); }} disabled={!rejectComment.trim() || rejectMutation.isPending} className="btn-danger">Reject</button>
+            </div>
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "Panel",
     "myTimesheet": "Mi Hoja de Horas",
+    "timesheetHistory": "Historial de Hojas",
     "allTimesheets": "Todas las Hojas",
     "approvals": "Aprobaciones",
     "projects": "Proyectos",
