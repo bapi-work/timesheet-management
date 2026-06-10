@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { ArrowLeftIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, PencilIcon, TrashIcon, KeyIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
@@ -25,6 +25,29 @@ export default function EmployeeDetailPage() {
   const { data: timesheets = [] } = useQuery({
     queryKey: ['employee', id, 'timesheets'],
     queryFn: () => api.get(`/users/${id}/timesheets`).then(r => r.data),
+  });
+
+  const [resetPasswordResult, setResetPasswordResult] = useState<string | null>(null);
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: () => api.post(`/users/${id}/reset-password`).then(r => r.data),
+    onSuccess: (data) => {
+      setResetPasswordResult(data.tempPassword);
+    },
+    onError: (e: unknown) => {
+      toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to reset password');
+    },
+  });
+
+  const disableMfaMutation = useMutation({
+    mutationFn: () => api.delete(`/users/${id}/mfa`),
+    onSuccess: () => {
+      toast.success('MFA disabled for this employee');
+      qc.invalidateQueries({ queryKey: ['employee', id] });
+    },
+    onError: (e: unknown) => {
+      toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to disable MFA');
+    },
   });
 
   const deleteMutation = useMutation({
@@ -150,6 +173,50 @@ export default function EmployeeDetailPage() {
           </table>
         </div>
       </div>
+
+      {/* Security — admin only */}
+      {isAdmin && (
+        <div className="card">
+          <h2 className="font-semibold text-gray-900 mb-4">Security</h2>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => {
+                if (confirm(`Reset password for ${employee.firstName} ${employee.lastName}? A new temporary password will be generated.`)) {
+                  resetPasswordMutation.mutate();
+                }
+              }}
+              disabled={resetPasswordMutation.isPending}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <KeyIcon className="h-4 w-4" /> Reset Password
+            </button>
+            {employee.mfaEnabled && (
+              <button
+                onClick={() => {
+                  if (confirm(`Disable MFA for ${employee.firstName} ${employee.lastName}?`)) {
+                    disableMfaMutation.mutate();
+                  }
+                }}
+                disabled={disableMfaMutation.isPending}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-200 text-orange-600 hover:bg-orange-50 text-sm font-medium"
+              >
+                <ShieldExclamationIcon className="h-4 w-4" /> Disable MFA
+              </button>
+            )}
+            {!employee.mfaEnabled && (
+              <p className="text-sm text-gray-400 flex items-center gap-1.5"><ShieldExclamationIcon className="h-4 w-4" /> MFA not enabled</p>
+            )}
+          </div>
+
+          {resetPasswordResult && (
+            <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm font-medium text-yellow-800 mb-1">Temporary password (share securely, shown once):</p>
+              <code className="text-base font-mono font-bold text-yellow-900 select-all">{resetPasswordResult}</code>
+              <button onClick={() => setResetPasswordResult(null)} className="ml-4 text-xs text-yellow-600 underline">Dismiss</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {showEditModal && (
         <EmployeeFormModal

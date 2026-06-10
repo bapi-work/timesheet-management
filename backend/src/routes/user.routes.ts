@@ -132,6 +132,32 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
   }
 });
 
+router.post('/:id/reset-password', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!target) throw new AppError('User not found', 404);
+
+    const newPassword = 'TempPass@' + Math.random().toString(36).slice(-8);
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash } });
+    res.json({ message: 'Password reset successfully', tempPassword: newPassword });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id/mfa', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!target) throw new AppError('User not found', 404);
+
+    await prisma.user.update({ where: { id: req.params.id }, data: { mfaEnabled: false, mfaSecret: null } });
+    res.json({ message: 'MFA disabled successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     await prisma.user.update({ where: { id: req.params.id }, data: { isActive: false, exitDate: new Date() } });
