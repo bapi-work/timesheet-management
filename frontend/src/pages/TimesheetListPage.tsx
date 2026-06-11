@@ -63,7 +63,7 @@ export default function TimesheetListPage() {
             <option value="">All Employees</option>
             {(usersData?.users || []).map((u: Record<string, unknown>) => (
               <option key={u.id as string} value={u.id as string}>
-                {u.firstName} {u.lastName}
+                {u.firstName as string} {u.lastName as string}
               </option>
             ))}
           </select>
@@ -93,7 +93,7 @@ export default function TimesheetListPage() {
                 <tr key={ts.id as string} className="tr-hover">
                   {isAdmin && (
                     <td className="td">
-                      {u ? `${u.firstName} ${u.lastName}` : '—'}
+                      {u ? `${u.firstName as string} ${u.lastName as string}` : '—'}
                       {u?.employeeId ? <span className="ml-1 text-xs text-gray-400">({u.employeeId as string})</span> : null}
                     </td>
                   )}
