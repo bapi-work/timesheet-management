@@ -29,10 +29,22 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     const { userId, status, from, to, page = '1', limit = '20' } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    const isManager = ['SYSTEM_ADMIN', 'HR_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER', 'TEAM_LEAD'].includes(req.user!.role);
-    const targetUserId = (isManager && userId) ? userId as string : req.user!.userId;
+    const isAdmin = ['SYSTEM_ADMIN', 'HR_ADMIN'].includes(req.user!.role);
+    const isManager = ['DEPARTMENT_MANAGER', 'PROJECT_MANAGER', 'TEAM_LEAD'].includes(req.user!.role);
 
-    const where: Record<string, unknown> = { userId: targetUserId };
+    const where: Record<string, unknown> = {};
+    if (isAdmin) {
+      // Admins see all org users; optionally filter by a specific userId
+      if (userId) {
+        where.userId = userId as string;
+      } else {
+        where.user = { organizationId: req.user!.organizationId };
+      }
+    } else if (isManager && userId) {
+      where.userId = userId as string;
+    } else {
+      where.userId = req.user!.userId;
+    }
     if (status) where.status = status;
     if (from || to) {
       where.periodStart = {};
