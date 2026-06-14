@@ -23,6 +23,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', labelKey: 'nav.dashboard', icon: HomeIcon },
   { to: '/timesheets/current', labelKey: 'nav.myTimesheet', icon: ClockIcon },
   { to: '/timesheets', labelKey: 'nav.timesheetHistory', icon: DocumentChartBarIcon },
+  { to: '/reports', labelKey: 'nav.reports', icon: ChartBarIcon },
   { to: '/calendar', labelKey: 'nav.calendar', icon: CalendarIcon },
   { to: '/leave', labelKey: 'nav.leave', icon: CalendarIcon },
   { to: '/expenses', labelKey: 'nav.expenses', icon: ReceiptRefundIcon },
@@ -40,7 +41,6 @@ const SENIOR_MANAGER_NAV = [
   { to: '/invoices', labelKey: 'nav.invoices', icon: CurrencyDollarIcon },
   { to: '/employees', labelKey: 'nav.employees', icon: UsersIcon },
   { to: '/teams', labelKey: 'nav.teams', icon: UserGroupIcon },
-  { to: '/reports', labelKey: 'nav.reports', icon: DocumentChartBarIcon },
 ];
 
 const ANALYTICS_NAV = [{ to: '/analytics', labelKey: 'nav.analytics', icon: ChartBarIcon }];

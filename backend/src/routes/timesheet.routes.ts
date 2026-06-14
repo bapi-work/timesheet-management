@@ -2,11 +2,15 @@ import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { startOfWeek, endOfWeek, format, parseISO, startOfDay } from 'date-fns';
 import { Prisma } from '@prisma/client';
+import multer from 'multer';
+import * as XLSX from 'xlsx';
 import prisma from '../utils/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { emailQueue, notificationQueue } from '../services/queue.service';
 import { approvalPendingTemplate } from '../services/email.service';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const router = Router();
 router.use(authenticate);
@@ -514,6 +518,172 @@ router.post('/:id/days/:date/withdraw', async (req: AuthRequest, res: Response, 
     });
 
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Bulk upload ──────────────────────────────────────────────────────────────
+router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) throw new AppError('No file uploaded', 400);
+
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+
+    if (!rows.length) throw new AppError('File is empty or has no data rows', 400);
+
+    // Normalise header keys to lowercase without spaces
+    const normalised = rows.map(row => {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(row)) out[k.toLowerCase().replace(/\s+/g, '')] = v;
+      return out;
+    });
+
+    // Validate and group entries by week
+    const timesheetMap = new Map<string, { periodStart: Date; periodEnd: Date; entries: typeof entrySchema._type[] }>();
+
+    const projects = await prisma.project.findMany({
+      where: { organizationId: req.user!.organizationId },
+      select: { id: true, code: true, name: true },
+    });
+
+    const errors: string[] = [];
+    const validRows: { timesheetKey: string; periodStart: Date; periodEnd: Date; entry: typeof entrySchema._type }[] = [];
+
+    for (let i = 0; i < normalised.length; i++) {
+      const row = normalised[i];
+      const rowNum = i + 2; // spreadsheet row (1=header)
+
+      // Parse date
+      let date: Date;
+      const rawDate = row['date'] || row['date(yyyy-mm-dd)'];
+      if (!rawDate) { errors.push(`Row ${rowNum}: Missing date`); continue; }
+      if (rawDate instanceof Date) {
+        date = rawDate;
+      } else {
+        date = new Date(rawDate as string);
+      }
+      if (isNaN(date.getTime())) { errors.push(`Row ${rowNum}: Invalid date "${rawDate}"`); continue; }
+
+      // Parse hours
+      const hoursRaw = row['hours'];
+      const hours = parseFloat(String(hoursRaw));
+      if (isNaN(hours) || hours <= 0 || hours > 24) { errors.push(`Row ${rowNum}: Invalid hours "${hoursRaw}"`); continue; }
+
+      // Match project by code or name (optional)
+      let projectId: string | undefined;
+      const projectRaw = String(row['projectcode'] || row['project'] || '').trim();
+      if (projectRaw) {
+        const found = projects.find(
+          p => p.code?.toLowerCase() === projectRaw.toLowerCase() || p.name?.toLowerCase() === projectRaw.toLowerCase()
+        );
+        if (!found) { errors.push(`Row ${rowNum}: Project "${projectRaw}" not found`); continue; }
+        projectId = found.id;
+      }
+
+      const billableRaw = String(row['billable'] || 'Y').trim().toUpperCase();
+      const isBillable = billableRaw === 'Y' || billableRaw === 'YES' || billableRaw === 'TRUE' || billableRaw === '1';
+
+      const entryTypeRaw = String(row['entrytype'] || 'REGULAR').trim().toUpperCase();
+      const validTypes = ['REGULAR', 'OVERTIME', 'COMP_OFF', 'ON_CALL'];
+      const entryType = validTypes.includes(entryTypeRaw) ? entryTypeRaw : 'REGULAR';
+
+      const description = String(row['description'] || row['notes'] || '').trim();
+
+      const entryDay = startOfDay(date);
+      const periodStart = startOfWeek(entryDay, { weekStartsOn: 1 });
+      const periodEnd = endOfWeek(entryDay, { weekStartsOn: 1 });
+      const timesheetKey = periodStart.toISOString();
+
+      validRows.push({
+        timesheetKey,
+        periodStart,
+        periodEnd,
+        entry: { date: entryDay.toISOString(), projectId, description, hours, isBillable, entryType: entryType as 'REGULAR' | 'OVERTIME' | 'COMP_OFF' | 'ON_CALL' },
+      });
+
+      if (!timesheetMap.has(timesheetKey)) {
+        timesheetMap.set(timesheetKey, { periodStart, periodEnd, entries: [] });
+      }
+    }
+
+    if (errors.length > 0 && validRows.length === 0) {
+      throw new AppError(`Upload failed:\n${errors.join('\n')}`, 400);
+    }
+
+    // Create or find timesheets and add entries
+    const results: { week: string; timesheetId: string; entriesAdded: number }[] = [];
+
+    await prisma.$transaction(async (tx) => {
+      for (const [key, weekData] of timesheetMap.entries()) {
+        const weekRows = validRows.filter(r => r.timesheetKey === key);
+
+        let timesheet = await tx.timesheet.findUnique({
+          where: { userId_periodStart_periodEnd: { userId: req.user!.userId, periodStart: weekData.periodStart, periodEnd: weekData.periodEnd } },
+        });
+
+        if (!timesheet) {
+          timesheet = await tx.timesheet.create({
+            data: { userId: req.user!.userId, periodStart: weekData.periodStart, periodEnd: weekData.periodEnd },
+          });
+        } else if (['APPROVED', 'LOCKED'].includes(timesheet.status)) {
+          errors.push(`Week of ${format(weekData.periodStart, 'MMM d')}: Timesheet is ${timesheet.status} and cannot be modified`);
+          continue;
+        }
+
+        for (const row of weekRows) {
+          await tx.timesheetEntry.create({
+            data: {
+              timesheetId: timesheet.id,
+              date: new Date(row.entry.date),
+              projectId: row.entry.projectId,
+              description: row.entry.description,
+              hours: row.entry.hours,
+              isBillable: row.entry.isBillable,
+              entryType: row.entry.entryType ?? 'REGULAR',
+            },
+          });
+        }
+
+        await recalcTotals(tx, timesheet.id);
+
+        results.push({
+          week: format(weekData.periodStart, 'MMM d, yyyy'),
+          timesheetId: timesheet.id,
+          entriesAdded: weekRows.length,
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      results,
+      warnings: errors,
+      totalEntriesAdded: results.reduce((s, r) => s + r.entriesAdded, 0),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Download upload template ─────────────────────────────────────────────────
+router.get('/upload-template', async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const wb = XLSX.utils.book_new();
+    const templateData = [
+      { Date: '2024-01-15', 'Project Code': 'PROJ-001', Description: 'Feature development', Hours: 8, Billable: 'Y', 'Entry Type': 'REGULAR' },
+      { Date: '2024-01-16', 'Project Code': 'PROJ-001', Description: 'Code review', Hours: 2, Billable: 'Y', 'Entry Type': 'REGULAR' },
+      { Date: '2024-01-16', 'Project Code': '', Description: 'Team meeting', Hours: 1, Billable: 'N', 'Entry Type': 'REGULAR' },
+    ];
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    ws['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 8 }, { wch: 10 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Timesheet Upload');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="timesheet-template.xlsx"');
+    res.send(buf);
   } catch (err) {
     next(err);
   }

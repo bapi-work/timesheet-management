@@ -103,7 +103,7 @@ export default function App() {
           <Route path="departments" element={<HrRoute><DepartmentsPage /></HrRoute>} />
           <Route path="employees" element={<SeniorManagerRoute><EmployeesPage /></SeniorManagerRoute>} />
           <Route path="employees/:id" element={<SeniorManagerRoute><EmployeeDetailPage /></SeniorManagerRoute>} />
-          <Route path="reports" element={<SeniorManagerRoute><ReportsPage /></SeniorManagerRoute>} />
+          <Route path="reports" element={<ReportsPage />} />
           <Route path="analytics" element={<AnalyticsRoute><AnalyticsPage /></AnalyticsRoute>} />
           <Route path="payroll" element={<PayrollRoute><PayrollPage /></PayrollRoute>} />
           <Route path="admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
