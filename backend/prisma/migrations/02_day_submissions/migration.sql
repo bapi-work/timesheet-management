@@ -1,5 +1,8 @@
--- CreateEnum
-CREATE TYPE "DaySubmissionStatus" AS ENUM ('SUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN');
+-- CreateEnum (idempotent: skip if already created by a previous partial run)
+DO $$ BEGIN
+  CREATE TYPE "DaySubmissionStatus" AS ENUM ('SUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateTable
 CREATE TABLE "DaySubmission" (
