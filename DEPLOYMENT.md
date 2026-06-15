@@ -985,6 +985,88 @@ For deployment issues:
 
 ---
 
+## Updating the Application on the Server
+
+Use this section whenever you pull new code (bug fixes, features, security patches) onto a running production server.
+
+### Docker Compose (self-hosted VM)
+
+```bash
+cd /opt/timesheet   # or wherever the repo lives
+
+# 1. Pull latest code
+git pull origin main
+
+# 2. Rebuild changed images and restart services (keeps DB & Redis running)
+docker compose up -d --build backend frontend
+
+# 3. Apply any new database migrations
+docker exec timesheet-backend npx prisma migrate deploy
+
+# 4. Confirm everything is healthy
+docker compose ps
+curl https://your-domain.com/api/health
+```
+
+If only backend changed: `docker compose up -d --build backend`
+If only frontend changed: `docker compose up -d --build frontend`
+
+### AWS ECS (Fargate)
+
+```bash
+# Build & push new image
+AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+REGION=us-east-1
+
+docker build -t timesheet-backend ./backend
+docker tag timesheet-backend:latest $AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/timesheet-backend:latest
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com
+docker push $AWS_ACCOUNT.dkr.ecr.$REGION.amazonaws.com/timesheet-backend:latest
+
+# Trigger rolling deployment (ECS replaces tasks one at a time)
+aws ecs update-service --cluster timesheet-prod --service timesheet-backend --force-new-deployment
+
+# Run migrations before traffic switches (one-off task)
+aws ecs run-task --cluster timesheet-prod --task-definition timesheet-migrate \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx]}"
+```
+
+### Azure App Service
+
+```bash
+# Push new image to ACR
+az acr build --registry timesheetprod --image timesheet-backend:latest ./backend
+
+# Restart the App Service to pull the new image
+az webapp restart --name timesheet-api --resource-group timesheet-prod
+
+# Run migration via SSH into App Service
+az webapp ssh --name timesheet-api --resource-group timesheet-prod
+# Inside: npx prisma migrate deploy
+```
+
+### GCP Cloud Run
+
+```bash
+REGION=us-central1
+PROJECT_ID=your-gcp-project
+
+# Build and push
+gcloud builds submit ./backend \
+  --tag $REGION-docker.pkg.dev/$PROJECT_ID/timesheet/backend:latest
+
+# Deploy new revision (Cloud Run routes traffic automatically after health checks pass)
+gcloud run deploy timesheet-backend \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/timesheet/backend:latest \
+  --region $REGION
+
+# Run migration
+gcloud run jobs execute timesheet-migrate --region $REGION --wait
+```
+
+---
+
 ## Additional Resources
 
 - [Prisma Documentation](https://www.prisma.io/docs/)
