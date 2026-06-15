@@ -45,7 +45,9 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
         where.user = { organizationId: req.user!.organizationId };
       }
     } else if (isManager && userId) {
+      // Verify the requested user belongs to the same org to prevent cross-tenant access
       where.userId = userId as string;
+      where.user = { organizationId: req.user!.organizationId };
     } else {
       where.userId = req.user!.userId;
     }
@@ -238,7 +240,7 @@ router.put('/:id/entries/:entryId', async (req: AuthRequest, res: Response, next
     const data = entrySchema.partial().parse(req.body);
     const entry = await prisma.$transaction(async (tx) => {
       const updated = await tx.timesheetEntry.update({
-        where: { id: req.params.entryId },
+        where: { id: req.params.entryId, timesheetId: req.params.id },
         data: {
           ...data,
           date: data.date ? new Date(data.date) : undefined,
@@ -262,15 +264,15 @@ router.delete('/:id/entries/:entryId', async (req: AuthRequest, res: Response, n
     if (['APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot edit', 400);
 
     await prisma.$transaction(async (tx) => {
-      const entry = await tx.timesheetEntry.findUnique({ where: { id: req.params.entryId } });
-      if (entry) {
-        const entryDate = startOfDay(entry.date);
-        const daySub = await tx.daySubmission.findFirst({
-          where: { timesheetId: req.params.id, date: entryDate, status: 'SUBMITTED' },
-        });
-        if (daySub) {
-          await tx.daySubmission.update({ where: { id: daySub.id }, data: { status: 'WITHDRAWN' } });
-        }
+      // findFirst with timesheetId scope prevents cross-timesheet entry deletion
+      const entry = await tx.timesheetEntry.findFirst({ where: { id: req.params.entryId, timesheetId: req.params.id } });
+      if (!entry) throw new AppError('Entry not found', 404);
+      const entryDate = startOfDay(entry.date);
+      const daySub = await tx.daySubmission.findFirst({
+        where: { timesheetId: req.params.id, date: entryDate, status: 'SUBMITTED' },
+      });
+      if (daySub) {
+        await tx.daySubmission.update({ where: { id: daySub.id }, data: { status: 'WITHDRAWN' } });
       }
       await tx.timesheetEntry.delete({ where: { id: req.params.entryId } });
       await recalcTotals(tx, req.params.id);

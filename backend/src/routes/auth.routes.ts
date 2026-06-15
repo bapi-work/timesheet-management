@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import speakeasy from 'speakeasy';
 import { z } from 'zod';
 import prisma from '../utils/prisma';
+import redis from '../utils/redis';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
@@ -24,19 +25,20 @@ const changePasswordSchema = z.object({
     .regex(PASSWORD_REGEX, 'Password must contain uppercase, lowercase, number and special character (@$!%*?&_-#)'),
 });
 
-// ISO 27001 A.9.4: Track failed login attempts for account lockout
-const failedAttempts = new Map<string, { count: number; lockedUntil?: Date }>();
+// ISO 27001 A.9.4: Track failed login attempts in Redis (distributed, survives restarts)
 const MAX_FAILED = 5;
-const LOCKOUT_MS = 30 * 60 * 1000; // 30 minutes
+const LOCKOUT_SECS = 30 * 60; // 30 minutes
+const lockKey = (email: string) => `login:lock:${email}`;
+const attemptsKey = (email: string) => `login:attempts:${email}`;
 
 router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password, mfaCode } = loginSchema.parse(req.body);
 
-    // ISO 27001 A.9.4: Check account lockout
-    const attempt = failedAttempts.get(email);
-    if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) {
-      const minutesLeft = Math.ceil((attempt.lockedUntil.getTime() - Date.now()) / 60000);
+    // ISO 27001 A.9.4: Check account lockout via Redis
+    const ttl = await redis.ttl(lockKey(email));
+    if (ttl > 0) {
+      const minutesLeft = Math.ceil(ttl / 60);
       throw new AppError(`Account temporarily locked. Try again in ${minutesLeft} minute(s).`, 423);
     }
 
@@ -55,27 +57,28 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
-      // Track failed attempts
-      const curr = failedAttempts.get(email) || { count: 0 };
-      curr.count += 1;
-      if (curr.count >= MAX_FAILED) {
-        curr.lockedUntil = new Date(Date.now() + LOCKOUT_MS);
-        curr.count = 0;
+      // Increment attempt counter in Redis; lock after MAX_FAILED (distributed, survives restarts)
+      const count = await redis.incr(attemptsKey(email));
+      if (count === 1) await redis.expire(attemptsKey(email), LOCKOUT_SECS);
+      if (count >= MAX_FAILED) {
+        await redis.set(lockKey(email), '1', 'EX', LOCKOUT_SECS);
+        await redis.del(attemptsKey(email));
       }
-      failedAttempts.set(email, curr);
       throw new AppError('Invalid credentials', 401);
     }
 
     // ISO 27001 A.9.4: IP whitelist check
+    // Use req.ip which respects Express `trust proxy` setting — never read X-Forwarded-For directly
     if (user.ipWhitelist && user.ipWhitelist.length > 0) {
-      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || '';
+      const clientIp = req.ip || '';
       if (!user.ipWhitelist.includes(clientIp)) {
         throw new AppError('Access denied from this IP address', 403);
       }
     }
 
     // Clear failed attempts on success
-    failedAttempts.delete(email);
+    await redis.del(attemptsKey(email));
+    await redis.del(lockKey(email));
 
     if (user.mfaEnabled) {
       if (!mfaCode) {

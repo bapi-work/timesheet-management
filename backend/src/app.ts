@@ -32,6 +32,10 @@ import prisma from './utils/prisma';
 
 const app = express();
 
+// Trust one reverse-proxy hop (nginx/load balancer) so req.ip is the real client IP
+// Required for IP whitelist checks — never read X-Forwarded-For directly
+app.set('trust proxy', 1);
+
 app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',

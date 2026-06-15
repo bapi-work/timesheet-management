@@ -73,7 +73,7 @@ router.get('/audit-logs', async (req: AuthRequest, res: Response, next: NextFunc
     const { entity, userId, from, to, page = '1', limit = '50' } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = { organizationId: req.user!.organizationId };
     if (entity) where.entity = entity;
     if (userId) where.userId = userId;
     if (from || to) {
@@ -107,23 +107,31 @@ router.post('/import-employees', upload.single('file'), async (req: AuthRequest,
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws);
 
-    const results = { created: 0, failed: 0, errors: [] as string[] };
+    const results = { created: 0, failed: 0, errors: [] as string[], credentials: [] as { email: string; tempPassword: string }[] };
 
     for (const row of rows) {
       try {
-        const hash = await bcrypt.hash('TempPass@123', 12);
+        const email = (row['Email'] || row['email'] || '').trim();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          results.failed++;
+          results.errors.push(`Row ${results.created + results.failed}: Invalid or missing email`);
+          continue;
+        }
+        const tempPassword = 'TempPass@' + Math.random().toString(36).slice(-8);
+        const hash = await bcrypt.hash(tempPassword, 12);
         await prisma.user.create({
           data: {
-            employeeId: row['Employee ID'] || row['employeeId'],
-            email: row['Email'] || row['email'],
-            firstName: row['First Name'] || row['firstName'],
-            lastName: row['Last Name'] || row['lastName'],
-            designation: row['Designation'] || row['designation'],
+            employeeId: (row['Employee ID'] || row['employeeId'] || '').trim(),
+            email,
+            firstName: (row['First Name'] || row['firstName'] || '').trim(),
+            lastName: (row['Last Name'] || row['lastName'] || '').trim(),
+            designation: (row['Designation'] || row['designation'] || '').trim() || undefined,
             passwordHash: hash,
             organizationId: req.user!.organizationId,
           },
         });
         results.created++;
+        results.credentials.push({ email, tempPassword });
       } catch (e) {
         results.failed++;
         results.errors.push(`Row ${results.created + results.failed}: ${(e as Error).message}`);
@@ -181,6 +189,8 @@ router.post('/holidays', async (req: AuthRequest, res: Response, next: NextFunct
 
 router.delete('/holidays/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const holiday = await prisma.holiday.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!holiday) throw new AppError('Holiday not found', 404);
     await prisma.holiday.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
   } catch (err) {

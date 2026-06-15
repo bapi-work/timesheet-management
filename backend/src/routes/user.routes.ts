@@ -10,7 +10,15 @@ import { UserRole } from '@prisma/client';
 const router = Router();
 router.use(authenticate);
 
-const upload = multer({ dest: 'uploads/avatars/', limits: { fileSize: 2 * 1024 * 1024 } });
+const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+const upload = multer({
+  dest: 'uploads/avatars/',
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, ALLOWED_AVATAR_TYPES.includes(file.mimetype));
+  },
+});
 
 const createUserSchema = z.object({
   employeeId: z.string(),
@@ -135,6 +143,10 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
       }
     }
 
+    // Verify the target belongs to the same org before writing (prevents cross-tenant update)
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!target) throw new AppError('User not found', 404);
+
     const user = await prisma.user.update({ where: { id: req.params.id }, data: updates });
     const { passwordHash, mfaSecret, ...safe } = user;
     res.json(safe);
@@ -180,6 +192,14 @@ router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: R
 
 router.get('/:id/timesheets', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const isSelf = req.params.id === req.user!.userId;
+    const isPrivileged = (MANAGER_ROLES as string[]).includes(req.user!.role);
+    if (!isSelf && !isPrivileged) throw new AppError('Forbidden', 403);
+
+    // Ensure the target user belongs to the same organization
+    const targetUser = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!targetUser) throw new AppError('User not found', 404);
+
     const { from, to, status } = req.query;
     const where: Record<string, unknown> = { userId: req.params.id };
     if (from || to) {
