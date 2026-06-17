@@ -22,7 +22,7 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
 COPY prisma ./prisma/
 
-RUN mkdir -p uploads/avatars uploads/receipts uploads/exports uploads/imports && chown -R nodejs:nodejs /app
+RUN mkdir -p uploads/avatars uploads/receipts uploads/exports uploads/imports uploads/leave-docs && chown -R nodejs:nodejs /app
 
 USER nodejs
 EXPOSE 4000
