@@ -20,7 +20,8 @@ const entrySchema = z.object({
   projectId: z.string().optional(),
   taskId: z.string().optional(),
   description: z.string().optional(),
-  hours: z.number().min(0).max(24),
+  category: z.string().optional(),
+  hours: z.number().min(0.25).max(24),
   isBillable: z.boolean().optional(),
   entryType: z.enum(['REGULAR', 'OVERTIME', 'COMP_OFF', 'ON_CALL']).optional(),
   startTime: z.string().optional(),
@@ -126,6 +127,27 @@ router.get('/current', async (req: AuthRequest, res: Response, next: NextFunctio
   }
 });
 
+// ─── Download upload template (must be before /:id) ──────────────────────────
+router.get('/upload-template', async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const wb = XLSX.utils.book_new();
+    const templateData = [
+      { Date: '2024-01-15', 'Project Code': 'PROJ-001', 'Task Name': 'Frontend', Category: 'Software Development', Description: 'Feature development', Hours: 8, Billable: 'Y', 'Entry Type': 'REGULAR' },
+      { Date: '2024-01-16', 'Project Code': 'PROJ-001', 'Task Name': '',         Category: 'Project Management',   Description: 'Code review',          Hours: 2, Billable: 'Y', 'Entry Type': 'REGULAR' },
+      { Date: '2024-01-16', 'Project Code': '',          'Task Name': '',         Category: 'Self Development',     Description: 'Team meeting',          Hours: 1, Billable: 'N', 'Entry Type': 'REGULAR' },
+    ];
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    ws['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 22 }, { wch: 30 }, { wch: 8 }, { wch: 10 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Timesheet Upload');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="timesheet-template.xlsx"');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const timesheet = await prisma.timesheet.findUnique({
@@ -210,6 +232,7 @@ router.post('/:id/entries', async (req: AuthRequest, res: Response, next: NextFu
             projectId: e.projectId,
             taskId: e.taskId,
             description: e.description,
+            category: e.category,
             hours: e.hours,
             isBillable: e.isBillable ?? true,
             entryType: e.entryType ?? 'REGULAR',
@@ -670,26 +693,6 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
   }
 });
 
-// ─── Download upload template ─────────────────────────────────────────────────
-router.get('/upload-template', async (_req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const wb = XLSX.utils.book_new();
-    const templateData = [
-      { Date: '2024-01-15', 'Project Code': 'PROJ-001', Description: 'Feature development', Hours: 8, Billable: 'Y', 'Entry Type': 'REGULAR' },
-      { Date: '2024-01-16', 'Project Code': 'PROJ-001', Description: 'Code review', Hours: 2, Billable: 'Y', 'Entry Type': 'REGULAR' },
-      { Date: '2024-01-16', 'Project Code': '', Description: 'Team meeting', Hours: 1, Billable: 'N', 'Entry Type': 'REGULAR' },
-    ];
-    const ws = XLSX.utils.json_to_sheet(templateData);
-    ws['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 8 }, { wch: 10 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Timesheet Upload');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="timesheet-template.xlsx"');
-    res.send(buf);
-  } catch (err) {
-    next(err);
-  }
-});
 
 async function recalcTotals(tx: Prisma.TransactionClient | typeof prisma, timesheetId: string): Promise<void> {
   const entries = await tx.timesheetEntry.findMany({ where: { timesheetId } });

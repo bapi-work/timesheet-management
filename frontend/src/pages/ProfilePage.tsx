@@ -1,10 +1,18 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { useAuthStore } from '../store/auth.store';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { ShieldCheckIcon, KeyIcon } from '@heroicons/react/24/outline';
+
+const TIMEZONES = [
+  'UTC', 'Asia/Manila', 'Asia/Singapore', 'Asia/Kuala_Lumpur', 'Asia/Jakarta',
+  'Asia/Bangkok', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Kolkata',
+  'Asia/Dubai', 'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'Australia/Sydney', 'Australia/Melbourne', 'Pacific/Auckland',
+];
 
 export default function ProfilePage() {
   const { user, refreshUser } = useAuthStore();
@@ -12,13 +20,43 @@ export default function ProfilePage() {
   const [tab, setTab] = useState<'profile' | 'security'>('profile');
   const [mfaSetup, setMfaSetup] = useState<{ secret: string; otpauthUrl: string } | null>(null);
 
-  const { register, handleSubmit } = useForm({ defaultValues: { firstName: user?.firstName, lastName: user?.lastName, phone: '', timezone: user?.organization?.timezone } });
+  // Fetch full profile from server to get current phone/timezone (#19)
+  const { data: profileData } = useQuery({
+    queryKey: ['my-profile'],
+    queryFn: () => api.get('/auth/me').then(r => r.data),
+  });
+
+  const { register, handleSubmit, reset } = useForm({
+    defaultValues: {
+      firstName: user?.firstName || '',
+      lastName: user?.lastName || '',
+      phone: '',
+      timezone: '',
+    },
+  });
+
+  // Populate form when profile data loads (#19)
+  useEffect(() => {
+    if (profileData) {
+      reset({
+        firstName: profileData.firstName || '',
+        lastName: profileData.lastName || '',
+        phone: profileData.phone || '',
+        timezone: profileData.timezone || profileData.organization?.timezone || '',
+      });
+    }
+  }, [profileData, reset]);
+
   const { register: regPwd, handleSubmit: hsPwd, reset: resetPwd } = useForm();
   const { register: regMfa, handleSubmit: hsMfa } = useForm();
 
   const updateMutation = useMutation({
     mutationFn: (d: Record<string, unknown>) => api.put(`/users/${user?.id}`, d),
-    onSuccess: () => { toast.success('Profile updated'); refreshUser(); },
+    onSuccess: () => {
+      toast.success('Profile updated');
+      refreshUser();
+      qc.invalidateQueries({ queryKey: ['my-profile'] });
+    },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
@@ -44,8 +82,8 @@ export default function ProfilePage() {
       <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
 
       <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit">
-        {['profile', 'security'].map(t => (
-          <button key={t} onClick={() => setTab(t as typeof tab)}
+        {(['profile', 'security'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
@@ -78,13 +116,20 @@ export default function ProfilePage() {
             </div>
             <div>
               <label className="label">Phone</label>
-              <input {...register('phone')} className="input" type="tel" />
+              <input {...register('phone')} className="input" type="tel" placeholder="+1 555 000 0000" />
             </div>
             <div>
               <label className="label">Timezone</label>
-              <input {...register('timezone')} className="input" />
+              <select {...register('timezone')} className="input">
+                <option value="">Select timezone</option>
+                {TIMEZONES.map(tz => (
+                  <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
+                ))}
+              </select>
             </div>
-            <button type="submit" disabled={updateMutation.isPending} className="btn-primary">Save Changes</button>
+            <button type="submit" disabled={updateMutation.isPending} className="btn-primary">
+              {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+            </button>
           </form>
         </div>
       )}
@@ -103,7 +148,8 @@ export default function ProfilePage() {
               </div>
               <div>
                 <label className="label">New Password</label>
-                <input {...regPwd('newPassword', { required: true, minLength: 8 })} type="password" className="input" />
+                <input {...regPwd('newPassword', { required: true, minLength: 10 })} type="password" className="input" />
+                <p className="text-xs text-gray-400 mt-1">Minimum 10 characters with uppercase, lowercase, number and special character</p>
               </div>
               <button type="submit" disabled={pwdMutation.isPending} className="btn-primary btn-sm">Update Password</button>
             </form>

@@ -364,6 +364,53 @@ router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, n
   }
 });
 
+// ─── History: approved day submissions (#22) ─────────────────────────────────
+router.get('/day-submissions/history', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const role = req.user!.role;
+    const userId = req.user!.userId;
+    const orgId = req.user!.organizationId;
+
+    let where: Record<string, unknown> = { status: 'APPROVED', timesheet: { user: { organizationId: orgId } } };
+
+    if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
+      if (role === 'TEAM_LEAD') {
+        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
+        const memberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+        where = { status: 'APPROVED', timesheet: { userId: { in: memberIds } } };
+      } else {
+        where = { status: 'APPROVED', timesheet: { user: { managerId: userId, organizationId: orgId } } };
+      }
+    }
+
+    const submissions = await prisma.daySubmission.findMany({
+      where,
+      include: {
+        timesheet: {
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, employeeId: true, department: { select: { name: true } } } },
+            entries: { include: { project: { select: { id: true, name: true } }, task: { select: { id: true, name: true } } } },
+          },
+        },
+      },
+      orderBy: { reviewedAt: 'desc' },
+      take: 100,
+    });
+
+    const result = submissions.map(sub => ({
+      ...sub,
+      dayEntries: sub.timesheet.entries.filter(e => {
+        const ed = new Date(e.date); const sd = new Date(sub.date);
+        return ed.getFullYear() === sd.getFullYear() && ed.getMonth() === sd.getMonth() && ed.getDate() === sd.getDate();
+      }),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/day-submissions/:id/approve', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const role = req.user!.role;

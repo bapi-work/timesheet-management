@@ -301,6 +301,7 @@ model TimesheetEntry {
   projectId    String?
   taskId       String?
   description  String?
+  category     String?
   hours        Float
   isBillable   Boolean   @default(true)
   entryType    EntryType @default(REGULAR)

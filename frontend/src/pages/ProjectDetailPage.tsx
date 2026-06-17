@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import api from '../lib/api';
-import { ArrowLeftIcon, UserPlusIcon, XMarkIcon, PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, UserPlusIcon, XMarkIcon, PlusIcon, PencilIcon, TrashIcon, ArrowUpTrayIcon, UsersIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import { useAuthStore } from '../store/auth.store';
 import { MANAGEMENT_ROLES, hasRole } from '../lib/roles';
@@ -169,12 +169,80 @@ function TaskFormModal({ projectId, task, onClose }: { projectId: string; task?:
   );
 }
 
+// ─── Add Team Modal (#5) ──────────────────────────────────────────────────────
+function AddTeamModal({ projectId, existingMemberIds, onClose }: { projectId: string; existingMemberIds: string[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [teamId, setTeamId] = useState('');
+  const [role, setRole] = useState('MEMBER');
+
+  const { data: teamsData } = useQuery({
+    queryKey: ['teams-all'],
+    queryFn: () => api.get('/teams?limit=100').then(r => r.data),
+  });
+  const teams: { id: string; name: string; members?: { userId: string }[] }[] = teamsData?.teams || teamsData || [];
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const team = teams.find(t => t.id === teamId);
+      if (!team) throw new Error('Team not found');
+      const memberIds = (team.members || []).map(m => m.userId).filter(uid => !existingMemberIds.includes(uid));
+      await Promise.all(memberIds.map(uid => api.post(`/projects/${projectId}/members`, { userId: uid, role })));
+      return memberIds.length;
+    },
+    onSuccess: (count) => {
+      toast.success(`Added ${count} team members to project`);
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      onClose();
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Failed'),
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="font-semibold text-gray-900">Add Entire Team</h3>
+          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="label">Team *</label>
+            <select value={teamId} onChange={e => setTeamId(e.target.value)} className="input">
+              <option value="">Select team...</option>
+              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Role for all members</label>
+            <select value={role} onChange={e => setRole(e.target.value)} className="input">
+              <option value="MEMBER">Member</option>
+              <option value="DEVELOPER">Developer</option>
+              <option value="DESIGNER">Designer</option>
+              <option value="QA">QA</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t">
+          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button onClick={() => mutation.mutate()} disabled={!teamId || mutation.isPending} className="btn-primary">
+            {mutation.isPending ? 'Adding...' : 'Add Team'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const user = useAuthStore(s => s.user);
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showAddTeam, setShowAddTeam] = useState(false);
   const [taskModal, setTaskModal] = useState<{ open: boolean; task?: Task }>({ open: false });
+  const [editingBudget, setEditingBudget] = useState(false);
+  const [budgetValue, setBudgetValue] = useState('');
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
 
   const { data: project, isLoading } = useQuery({
@@ -189,20 +257,51 @@ export default function ProjectDetailPage() {
 
   const removeMember = useMutation({
     mutationFn: (userId: string) => api.delete(`/projects/${id}/members/${userId}`),
-    onSuccess: () => {
-      toast.success('Member removed');
-      qc.invalidateQueries({ queryKey: ['project', id] });
-    },
+    onSuccess: () => { toast.success('Member removed'); qc.invalidateQueries({ queryKey: ['project', id] }); },
     onError: () => toast.error('Failed to remove member'),
   });
 
   const deleteTask = useMutation({
     mutationFn: (taskId: string) => api.delete(`/projects/${id}/tasks/${taskId}`),
-    onSuccess: (data) => {
-      toast.success(data.data?.message || 'Task deleted');
-      qc.invalidateQueries({ queryKey: ['project', id] });
-    },
+    onSuccess: (data) => { toast.success(data.data?.message || 'Task deleted'); qc.invalidateQueries({ queryKey: ['project', id] }); },
     onError: () => toast.error('Failed to delete task'),
+  });
+
+  // Update budget hours inline (#3)
+  const updateBudgetMutation = useMutation({
+    mutationFn: (hours: number) => api.put(`/projects/${id}`, { budgetHours: hours }),
+    onSuccess: () => { toast.success('Budget hours updated'); setEditingBudget(false); qc.invalidateQueries({ queryKey: ['project', id] }); },
+    onError: () => toast.error('Failed to update budget'),
+  });
+
+  // Upload tasks from CSV/Excel (#1)
+  const uploadTasksMutation = useMutation({
+    mutationFn: async (file: File) => {
+      // Parse CSV client-side for a simple approach
+      const text = await file.text();
+      const lines = text.split('\n').filter(l => l.trim());
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+      const tasks = lines.slice(1).map(line => {
+        const vals = line.split(',').map(v => v.trim().replace(/"/g, ''));
+        const obj: Record<string, string> = {};
+        headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+        return {
+          name: obj['name'] || obj['task name'] || obj['task'],
+          description: obj['description'] || '',
+          estimatedHours: obj['estimated hours'] || obj['hours'] ? Number(obj['estimated hours'] || obj['hours']) : undefined,
+          isBillable: (obj['billable'] || '').toLowerCase() !== 'n',
+        };
+      }).filter(t => t.name);
+
+      await Promise.all(tasks.map(t => api.post(`/projects/${id}/tasks`, t)));
+      return tasks.length;
+    },
+    onSuccess: (count) => {
+      toast.success(`${count} tasks imported`);
+      qc.invalidateQueries({ queryKey: ['project', id] });
+      if (csvInputRef.current) csvInputRef.current.value = '';
+    },
+    onError: () => toast.error('Failed to import tasks'),
   });
 
   if (isLoading) return <div className="flex justify-center py-16"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
@@ -239,16 +338,47 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* Utilization */}
+      {/* Utilization + Budget Hours edit (#3) */}
       {utilization && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="card text-center">
-            <p className="text-2xl font-bold text-gray-900">{(utilization.totalHours || 0).toFixed(1)}h</p>
+            <p className="text-2xl font-bold text-gray-900">{(utilization.totalHours || 0).toFixed(2)}h</p>
             <p className="text-xs text-gray-500 mt-1">Hours Used</p>
           </div>
           <div className="card text-center">
-            <p className="text-2xl font-bold text-gray-900">{project.budgetHours || '—'}{project.budgetHours ? 'h' : ''}</p>
-            <p className="text-xs text-gray-500 mt-1">Budget Hours</p>
+            {editingBudget ? (
+              <div className="flex items-center gap-2 justify-center">
+                <input
+                  type="number" step="0.5" min="0"
+                  value={budgetValue}
+                  onChange={e => setBudgetValue(e.target.value)}
+                  className="input w-24 text-center"
+                  autoFocus
+                />
+                <button
+                  onClick={() => updateBudgetMutation.mutate(Number(budgetValue))}
+                  disabled={updateBudgetMutation.isPending}
+                  className="btn-primary btn-sm"
+                >Save</button>
+                <button onClick={() => setEditingBudget(false)} className="btn-secondary btn-sm">✕</button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2">
+                <div>
+                  <p className="text-2xl font-bold text-gray-900">{project.budgetHours || '—'}{project.budgetHours ? 'h' : ''}</p>
+                  <p className="text-xs text-gray-500 mt-1">Budget Hours</p>
+                </div>
+                {isManager && (
+                  <button
+                    onClick={() => { setBudgetValue(String(project.budgetHours || '')); setEditingBudget(true); }}
+                    className="p-1 rounded text-gray-300 hover:text-primary-600"
+                    title="Edit budget hours"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <div className="card text-center">
             <p className={`text-2xl font-bold ${(utilization.utilization || 0) > 90 ? 'text-red-600' : 'text-green-600'}`}>
@@ -261,12 +391,17 @@ export default function ProjectDetailPage() {
 
       {/* Members */}
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <h3 className="font-semibold text-gray-900">Team Members ({project.members?.length || 0})</h3>
           {isManager && (
-            <button onClick={() => setShowAddMember(true)} className="btn-primary btn-sm flex items-center gap-1.5">
-              <UserPlusIcon className="h-4 w-4" /> Add Member
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowAddTeam(true)} className="btn-secondary btn-sm flex items-center gap-1.5">
+                <UsersIcon className="h-4 w-4" /> Add Team
+              </button>
+              <button onClick={() => setShowAddMember(true)} className="btn-primary btn-sm flex items-center gap-1.5">
+                <UserPlusIcon className="h-4 w-4" /> Add Member
+              </button>
+            </div>
           )}
         </div>
         {!project.members?.length ? (
@@ -299,12 +434,34 @@ export default function ProjectDetailPage() {
 
       {/* Tasks */}
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <h3 className="font-semibold text-gray-900">Tasks ({project.tasks?.length || 0})</h3>
           {isManager && (
-            <button onClick={() => setTaskModal({ open: true })} className="btn-primary btn-sm flex items-center gap-1.5">
-              <PlusIcon className="h-4 w-4" /> Add Task
-            </button>
+            <div className="flex gap-2">
+              {/* CSV upload (#1) */}
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadTasksMutation.mutate(file);
+                }}
+              />
+              <button
+                onClick={() => csvInputRef.current?.click()}
+                disabled={uploadTasksMutation.isPending}
+                className="btn-secondary btn-sm flex items-center gap-1.5"
+                title="Upload tasks from CSV (columns: name, description, estimated hours, billable)"
+              >
+                <ArrowUpTrayIcon className="h-4 w-4" />
+                {uploadTasksMutation.isPending ? 'Importing…' : 'Import CSV'}
+              </button>
+              <button onClick={() => setTaskModal({ open: true })} className="btn-primary btn-sm flex items-center gap-1.5">
+                <PlusIcon className="h-4 w-4" /> Add Task
+              </button>
+            </div>
           )}
         </div>
         <div className="space-y-1">
@@ -342,6 +499,14 @@ export default function ProjectDetailPage() {
           projectId={id!}
           existingMemberIds={memberIds}
           onClose={() => setShowAddMember(false)}
+        />
+      )}
+
+      {showAddTeam && (
+        <AddTeamModal
+          projectId={id!}
+          existingMemberIds={memberIds}
+          onClose={() => setShowAddTeam(false)}
         />
       )}
 
