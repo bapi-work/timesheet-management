@@ -1,9 +1,20 @@
 import { Router, Response, NextFunction } from 'express';
+import multer from 'multer';
+import path from 'path';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 import { notificationQueue } from '../services/queue.service';
+
+const documentUpload = multer({
+  dest: 'uploads/leave-docs/',
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.doc', '.docx'];
+    cb(null, allowed.includes(path.extname(file.originalname).toLowerCase()));
+  },
+});
 
 const router = Router();
 router.use(authenticate);
@@ -15,6 +26,17 @@ router.get('/balance', async (req: AuthRequest, res: Response, next: NextFunctio
       where: { userId: req.user!.userId, year },
     });
     res.json(balances);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leave/upload-doc — upload supporting document (#20)
+router.post('/upload-doc', documentUpload.single('file'), (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) throw new AppError('No file uploaded', 400);
+    const url = `/uploads/leave-docs/${req.file.filename}`;
+    res.json({ url, filename: req.file.originalname });
   } catch (err) {
     next(err);
   }
@@ -50,7 +72,7 @@ router.get('/requests', async (req: AuthRequest, res: Response, next: NextFuncti
 
 router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { leaveType, startDate, endDate, reason } = req.body;
+    const { leaveType, startDate, endDate, reason, documentUrl } = req.body;
 
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -69,6 +91,7 @@ router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunct
         endDate: end,
         days,
         reason,
+        documentUrl: documentUrl || null,
         approverId: user?.managerId || undefined,
       },
     });

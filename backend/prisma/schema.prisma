@@ -557,6 +557,7 @@ model LeaveRequest {
   endDate     DateTime
   days        Float
   reason      String?
+  documentUrl String?
   status      LeaveStatus @default(PENDING)
   approverId  String?
   approverComments String?
