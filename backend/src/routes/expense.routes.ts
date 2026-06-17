@@ -1,8 +1,19 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
+import path from 'path';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
+
+const receiptUpload = multer({
+  dest: 'uploads/receipts/',
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.heic'];
+    cb(null, allowed.includes(path.extname(file.originalname).toLowerCase()));
+  },
+});
 
 const router = Router();
 router.use(authenticate);
@@ -231,6 +242,18 @@ router.delete('/:id', async (req: AuthRequest, res: Response, next: NextFunction
     if (!['DRAFT', 'REJECTED'].includes(expense.status)) throw new AppError('Cannot delete submitted expense', 400);
     await prisma.expense.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/expenses/upload-receipt — upload supporting document (#20)
+router.post('/upload-receipt', receiptUpload.single('file'), (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) throw new AppError('No file uploaded', 400);
+    // Return a relative URL the client can store as receiptUrl
+    const url = `/uploads/receipts/${req.file.filename}`;
+    res.json({ url, filename: req.file.originalname });
   } catch (err) {
     next(err);
   }

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { format } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { PlusIcon, CalendarDaysIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
 
@@ -29,6 +29,9 @@ export default function LeavePage() {
   const [statusFilter, setStatusFilter] = useState('');
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const docInputRef = useRef<HTMLInputElement>(null);
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docUploading, setDocUploading] = useState(false);
   const { register: registerHoliday, handleSubmit: handleSubmitHoliday, reset: resetHoliday } = useForm();
   const { register: registerBalance, handleSubmit: handleSubmitBalance, reset: resetBalance, setValue } = useForm();
 
@@ -66,9 +69,34 @@ export default function LeavePage() {
 
   const createMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.post('/leave/requests', data),
-    onSuccess: () => { toast.success('Leave request submitted!'); qc.invalidateQueries({ queryKey: ['leave'] }); setShowModal(false); reset(); },
+    onSuccess: () => {
+      toast.success('Leave request submitted!');
+      qc.invalidateQueries({ queryKey: ['leave'] });
+      setShowModal(false);
+      reset();
+      setDocFile(null);
+    },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
+
+  const handleLeaveSubmit = async (d: Record<string, unknown>) => {
+    let documentUrl: string | undefined;
+    if (docFile) {
+      setDocUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append('file', docFile);
+        const res = await api.post('/leave/upload-doc', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        documentUrl = res.data.url;
+      } catch {
+        toast.error('Failed to upload document');
+        setDocUploading(false);
+        return;
+      }
+      setDocUploading(false);
+    }
+    createMutation.mutate({ ...d, documentUrl });
+  };
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => api.post(`/leave/requests/${id}/cancel`),
@@ -351,7 +379,7 @@ export default function LeavePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <h3 className="text-lg font-bold text-gray-900 mb-5">Request Leave</h3>
-            <form onSubmit={handleSubmit(d => createMutation.mutate(d as Record<string, unknown>))} className="space-y-4">
+            <form onSubmit={handleSubmit(d => handleLeaveSubmit(d as Record<string, unknown>))} className="space-y-4">
               <div>
                 <label className="label">Leave Type *</label>
                 <select {...register('leaveType', { required: true })} className={`input ${errors.leaveType ? 'input-error' : ''}`}>
@@ -373,9 +401,22 @@ export default function LeavePage() {
                 <label className="label">Reason</label>
                 <textarea {...register('reason')} className="input" rows={3} placeholder="Optional reason..." />
               </div>
+              <div>
+                <label className="label">Supporting Document <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input ref={docInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.doc,.docx" className="hidden" onChange={e => setDocFile(e.target.files?.[0] || null)} />
+                <button type="button" onClick={() => docInputRef.current?.click()} className="btn-secondary w-full flex items-center gap-2 justify-center">
+                  <PaperClipIcon className="h-4 w-4" />
+                  {docFile ? docFile.name : 'Attach Medical Certificate or Document'}
+                </button>
+                {docFile && (
+                  <button type="button" onClick={() => { setDocFile(null); if (docInputRef.current) docInputRef.current.value = ''; }} className="text-xs text-red-500 hover:underline mt-1">Remove</button>
+                )}
+              </div>
               <div className="flex gap-3 justify-end">
-                <button type="button" onClick={() => { setShowModal(false); reset(); }} className="btn-secondary">Cancel</button>
-                <button type="submit" disabled={createMutation.isPending} className="btn-primary">Submit Request</button>
+                <button type="button" onClick={() => { setShowModal(false); reset(); setDocFile(null); }} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={createMutation.isPending || docUploading} className="btn-primary">
+                  {docUploading ? 'Uploading…' : createMutation.isPending ? 'Submitting…' : 'Submit Request'}
+                </button>
               </div>
             </form>
           </div>

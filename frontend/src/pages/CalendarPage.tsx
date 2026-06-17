@@ -112,12 +112,24 @@ export default function CalendarPage() {
   const holidays: Holiday[] = Array.isArray(holidayData) ? holidayData : [];
   holidays.forEach(h => holidayMap.set(h.date.slice(0, 10), h));
 
-  const calStart = startOfWeek(monthStart, { weekStartsOn: 1 });
-  const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
+  // For week view, show only the 7 days of the week containing currentDate
+  const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
+
+  const calStart = view === 'week' ? weekStart : startOfWeek(monthStart, { weekStartsOn: 1 });
+  const calEnd   = view === 'week' ? weekEnd   : endOfWeek(monthEnd, { weekStartsOn: 1 });
   const days = eachDayOfInterval({ start: calStart, end: calEnd });
 
-  const prevMonth = () => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1));
-  const nextMonth = () => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1));
+  const prevMonth = () => setCurrentDate(d =>
+    view === 'week'
+      ? new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7)
+      : new Date(d.getFullYear(), d.getMonth() - 1, 1)
+  );
+  const nextMonth = () => setCurrentDate(d =>
+    view === 'week'
+      ? new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)
+      : new Date(d.getFullYear(), d.getMonth() + 1, 1)
+  );
   const goToday = () => setCurrentDate(new Date());
 
   const getHoursColor = (hours: number) => {
@@ -155,7 +167,11 @@ export default function CalendarPage() {
             <ChevronLeftIcon className="h-5 w-5" />
           </button>
           <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold text-gray-900">{format(currentDate, 'MMMM yyyy')}</h2>
+            <h2 className="text-lg font-semibold text-gray-900">
+              {view === 'week'
+                ? `${format(weekStart, 'MMM d')} – ${format(weekEnd, 'MMM d, yyyy')}`
+                : format(currentDate, 'MMMM yyyy')}
+            </h2>
             <button onClick={goToday} className="px-3 py-1 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100">
               {t('calendar.today')}
             </button>
