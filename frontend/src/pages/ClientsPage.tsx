@@ -211,7 +211,7 @@ export default function ClientsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editClient, setEditClient] = useState<Client | undefined>();
   const canManageClients = hasRole(user?.role, MANAGEMENT_ROLES);
-  const canDeleteClients = hasRole(user?.role, ADMIN_ROLES);
+  const canDeleteClients = hasRole(user?.role, MANAGEMENT_ROLES);
 
   const { data, isLoading } = useQuery({
     queryKey: ['clients', search],

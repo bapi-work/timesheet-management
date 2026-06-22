@@ -290,7 +290,7 @@ function TeamCard({ team, canManage, canDelete }: { team: Team; canManage: boole
 export default function TeamsPage() {
   const user = useAuthStore(s => s.user);
   const canManage = hasRole(user?.role, MANAGEMENT_ROLES);
-  const canDelete = hasRole(user?.role, ADMIN_ROLES);
+  const canDelete = hasRole(user?.role, MANAGEMENT_ROLES);
   const [showCreate, setShowCreate] = useState(false);
   const [filter, setFilter] = useState('');
 

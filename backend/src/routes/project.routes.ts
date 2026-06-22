@@ -136,6 +136,22 @@ router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Re
   }
 });
 
+router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const project = await prisma.project.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+      include: { _count: { select: { timesheetEntries: true } } },
+    });
+    if (!project) throw new AppError('Project not found', 404);
+    if (project._count.timesheetEntries > 0) throw new AppError('Cannot delete project with timesheet entries. Archive it instead.', 400);
+
+    await prisma.project.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Project deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/:id/members', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { userId, role, allocatedHours, startDate, endDate } = req.body;

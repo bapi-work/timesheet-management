@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import api from '../lib/api';
@@ -235,6 +235,7 @@ function AddTeamModal({ projectId, existingMemberIds, onClose }: { projectId: st
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const user = useAuthStore(s => s.user);
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
   const [showAddMember, setShowAddMember] = useState(false);
@@ -265,6 +266,12 @@ export default function ProjectDetailPage() {
     mutationFn: (taskId: string) => api.delete(`/projects/${id}/tasks/${taskId}`),
     onSuccess: (data) => { toast.success(data.data?.message || 'Task deleted'); qc.invalidateQueries({ queryKey: ['project', id] }); },
     onError: () => toast.error('Failed to delete task'),
+  });
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: () => api.delete(`/projects/${id}`),
+    onSuccess: () => { toast.success('Project deleted'); navigate('/projects'); },
+    onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Cannot delete project'),
   });
 
   // Update budget hours inline (#3)
@@ -320,9 +327,19 @@ export default function ProjectDetailPage() {
           <h1 className="text-2xl font-bold text-gray-900">{project.name}</h1>
           <p className="text-gray-500">{project.code}{project.client?.name && ` · ${project.client.name}`}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <span className={project.billable ? 'badge-green' : 'badge-gray'}>{project.billable ? 'Billable' : 'Internal'}</span>
           <span className={project.status === 'ACTIVE' ? 'badge-green' : 'badge-yellow'}>{project.status}</span>
+          {isManager && (
+            <button
+              onClick={() => { if (confirm(`Delete project "${project.name}"? This cannot be undone.`)) deleteProjectMutation.mutate(); }}
+              disabled={deleteProjectMutation.isPending}
+              className="btn-danger btn-sm flex items-center gap-1"
+              title="Delete project"
+            >
+              <TrashIcon className="h-4 w-4" /> Delete Project
+            </button>
+          )}
         </div>
       </div>
 

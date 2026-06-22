@@ -126,7 +126,7 @@ router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Re
   }
 });
 
-router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     await prisma.team.delete({ where: { id: req.params.id } });
     res.json({ message: 'Team deleted' });

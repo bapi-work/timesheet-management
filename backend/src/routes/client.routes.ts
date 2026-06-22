@@ -199,7 +199,7 @@ router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Re
   }
 });
 
-router.delete('/:id', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const client = await prisma.client.findFirst({
       where: { id: req.params.id, organizationId: req.user!.organizationId },
