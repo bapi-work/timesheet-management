@@ -37,7 +37,7 @@ type FormValues = z.infer<typeof schema>;
 
 interface ExpenseFormProps {
   onClose: () => void;
-  initialValues?: Partial<FormValues> & { id?: string };
+  initialValues?: Partial<FormValues> & { id?: string; receiptUrl?: string };
   projects: { id: string; name: string }[];
   isEdit?: boolean;
 }
@@ -46,6 +46,7 @@ function ExpenseForm({ onClose, initialValues, projects, isEdit }: ExpenseFormPr
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const existingReceipt = initialValues?.receiptUrl;
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -134,11 +135,17 @@ function ExpenseForm({ onClose, initialValues, projects, isEdit }: ExpenseFormPr
           <input type="text" {...register('notes')} className="input-field w-full" placeholder="Additional notes" />
         </div>
 
-        {/* Supporting document upload (#20) */}
+        {/* Supporting document */}
         <div className="col-span-2">
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Supporting Document <span className="text-gray-400 font-normal">(optional — receipt, medical cert, etc.)</span>
           </label>
+          {existingReceipt && !selectedFile && (
+            <div className="flex items-center gap-2 mb-2 text-sm text-blue-600">
+              <PaperClipIcon className="h-4 w-4" />
+              <a href={existingReceipt} target="_blank" rel="noreferrer" className="hover:underline">View current attachment</a>
+            </div>
+          )}
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -146,7 +153,7 @@ function ExpenseForm({ onClose, initialValues, projects, isEdit }: ExpenseFormPr
               className="btn-secondary btn-sm flex items-center gap-2"
             >
               <PaperClipIcon className="h-4 w-4" />
-              {selectedFile ? 'Change File' : 'Attach File'}
+              {selectedFile ? 'Change File' : existingReceipt ? 'Replace File' : 'Attach File'}
             </button>
             {selectedFile && (
               <span className="text-sm text-gray-600 flex items-center gap-1">
@@ -185,7 +192,7 @@ export default function ExpensesPage() {
   const isManager = hasRole(user?.role, [...ADMIN_ROLES, ...MANAGEMENT_ROLES]);
 
   const [showForm, setShowForm] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<(FormValues & { id: string }) | null>(null);
+  const [editingExpense, setEditingExpense] = useState<(FormValues & { id: string; receiptUrl?: string }) | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
 
   const { data, isLoading } = useQuery({
@@ -244,7 +251,7 @@ export default function ExpensesPage() {
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Total Expenses</p>
-          <p className="text-2xl font-bold text-gray-900">${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+          <p className="text-2xl font-bold text-gray-900">MYR {total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Pending Approval</p>
@@ -252,7 +259,7 @@ export default function ExpensesPage() {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Reimbursed</p>
-          <p className="text-2xl font-bold text-green-600">${reimbursed.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+          <p className="text-2xl font-bold text-green-600">MYR {reimbursed.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
         </div>
       </div>
 
@@ -335,6 +342,11 @@ export default function ExpensesPage() {
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap">
                       {/* Edit draft (#18) */}
+                      {e.receiptUrl && (
+                        <a href={e.receiptUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                          <PaperClipIcon className="h-3 w-3" /> View
+                        </a>
+                      )}
                       {e.status === 'DRAFT' && (
                         <button
                           onClick={() => {
@@ -347,6 +359,7 @@ export default function ExpensesPage() {
                               description: e.description,
                               projectId: e.projectId || '',
                               notes: e.notes || '',
+                              receiptUrl: e.receiptUrl,
                             });
                             setShowForm(false);
                             window.scrollTo({ top: 0, behavior: 'smooth' });

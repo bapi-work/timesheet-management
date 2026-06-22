@@ -2,7 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
 import path from 'path';
 import prisma from '../utils/prisma';
-import { authenticate, authorize, AuthRequest, ADMIN_ROLES } from '../middleware/auth.middleware';
+import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 import { notificationQueue } from '../services/queue.service';
@@ -117,9 +117,8 @@ router.post('/requests/:id/approve', async (req: AuthRequest, res: Response, nex
     const { comments } = req.body;
     const request = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
     if (!request) throw new AppError('Request not found', 404);
-    if (request.approverId !== req.user!.userId && !(ADMIN_ROLES as string[]).includes(req.user!.role)) {
-      throw new AppError('Forbidden', 403);
-    }
+    const canApprove = (MANAGER_ROLES as string[]).includes(req.user!.role) || request.approverId === req.user!.userId;
+    if (!canApprove) throw new AppError('Forbidden', 403);
 
     const updated = await prisma.$transaction(async (tx) => {
       const req2 = await tx.leaveRequest.update({
@@ -156,9 +155,8 @@ router.post('/requests/:id/reject', async (req: AuthRequest, res: Response, next
     const { comments } = req.body;
     const request = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
     if (!request) throw new AppError('Request not found', 404);
-    if (request.approverId !== req.user!.userId && !(ADMIN_ROLES as string[]).includes(req.user!.role)) {
-      throw new AppError('Forbidden', 403);
-    }
+    const canReject = (MANAGER_ROLES as string[]).includes(req.user!.role) || request.approverId === req.user!.userId;
+    if (!canReject) throw new AppError('Forbidden', 403);
 
     const updated = await prisma.leaveRequest.update({
       where: { id: req.params.id },

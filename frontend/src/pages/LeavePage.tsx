@@ -214,18 +214,22 @@ export default function LeavePage() {
       {tab === 'my' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
-            {/* Leave Balances */}
-            {balances.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {(balances as Record<string, unknown>[]).map((b) => (
-                  <div key={b.id as string} className="card text-center py-3">
-                    <p className="text-xs text-gray-500">{(b.leaveType as string).replace(/_/g, ' ')}</p>
-                    <p className="text-3xl font-bold text-gray-900 mt-1">{(b.entitled as number) - (b.used as number)}</p>
-                    <p className="text-xs text-gray-400">{b.used as number} used of {b.entitled as number}</p>
+            {/* Leave Balances — show all types, default to 0 if no record */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {LEAVE_TYPES.map((lt) => {
+                const b = (balances as Record<string, unknown>[]).find(x => x.leaveType === lt);
+                const entitled = (b?.entitled as number) || 0;
+                const used = (b?.used as number) || 0;
+                const remaining = entitled - used;
+                return (
+                  <div key={lt} className="card text-center py-3">
+                    <p className="text-xs text-gray-500">{lt.replace(/_/g, ' ')}</p>
+                    <p className={`text-3xl font-bold mt-1 ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`}>{remaining}</p>
+                    <p className="text-xs text-gray-400">{used} used of {entitled}</p>
                   </div>
-                ))}
-              </div>
-            )}
+                );
+              })}
+            </div>
             <h2 className="font-semibold text-gray-900">My Leave Requests</h2>
             {myRequests.length === 0
               ? <div className="card text-center py-10 text-gray-400">No leave requests yet</div>

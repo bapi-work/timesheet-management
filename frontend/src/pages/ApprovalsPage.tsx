@@ -369,6 +369,19 @@ export default function ApprovalsPage() {
       {/* History Tab (#22) */}
       {tab === 'history' && (
         <>
+          {/* Employee search filter for history */}
+          <div className="flex gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-48">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Filter by employee name…"
+                className="input pl-9 w-full"
+              />
+            </div>
+            {search && <button onClick={() => setSearch('')} className="btn-secondary btn-sm">Clear</button>}
+          </div>
           {historyLoading ? (
             <div className="flex items-center justify-center h-32"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
           ) : (approvedHistory as unknown[]).length === 0 ? (
@@ -377,7 +390,7 @@ export default function ApprovalsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {(approvedHistory as Record<string, unknown>[]).map((sub) => {
+              {(approvedHistory as Record<string, unknown>[]).filter(filterItem).map((sub) => {
                 const ts = sub.timesheet as Record<string, unknown>;
                 const user = ts.user as Record<string, unknown>;
                 const dayEntries = (sub.dayEntries as Record<string, unknown>[]) || [];

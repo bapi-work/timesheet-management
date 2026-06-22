@@ -65,10 +65,10 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
         approvedThisWeek,
       });
     } else {
-      const [myTimesheet, pendingLeave, myHoursThisMonth, recentTimesheets] = await Promise.all([
+      const [myTimesheet, pendingLeave, myHoursThisMonth, recentTimesheets, weekDaySubmissions] = await Promise.all([
         prisma.timesheet.findFirst({
           where: { userId: req.user!.userId, periodStart: { gte: weekStart } },
-          select: { status: true, totalHours: true, billableHours: true },
+          select: { id: true, status: true, totalHours: true, billableHours: true },
         }),
         prisma.leaveRequest.count({ where: { userId: req.user!.userId, status: 'PENDING' } }),
         prisma.timesheetEntry.aggregate({
@@ -81,10 +81,23 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
           take: 5,
           select: { id: true, periodStart: true, periodEnd: true, totalHours: true, billableHours: true, status: true, submittedAt: true },
         }),
+        prisma.daySubmission.findMany({
+          where: { timesheet: { userId: req.user!.userId, periodStart: { gte: weekStart } } },
+          select: { status: true },
+        }),
       ]);
 
+      // Derive display status: if timesheet is DRAFT but day submissions exist, show best day-level status
+      let currentTimesheetStatus = myTimesheet?.status || 'NOT_STARTED';
+      if (currentTimesheetStatus === 'DRAFT' && weekDaySubmissions.length > 0) {
+        const hasApproved = weekDaySubmissions.some(s => s.status === 'APPROVED');
+        const hasSubmitted = weekDaySubmissions.some(s => s.status === 'SUBMITTED');
+        if (hasApproved) currentTimesheetStatus = 'APPROVED';
+        else if (hasSubmitted) currentTimesheetStatus = 'SUBMITTED';
+      }
+
       res.json({
-        currentTimesheetStatus: myTimesheet?.status || 'NOT_STARTED',
+        currentTimesheetStatus,
         hoursThisWeek: myTimesheet?.totalHours || 0,
         billableHoursThisWeek: myTimesheet?.billableHours || 0,
         hoursThisMonth: myHoursThisMonth._sum.hours || 0,

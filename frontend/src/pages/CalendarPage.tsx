@@ -61,9 +61,9 @@ export default function CalendarPage() {
   const { data: holidayData } = useQuery({
     queryKey: ['calendar-holidays', format(monthStart, 'yyyy-MM')],
     queryFn: () =>
-      api.get('/admin/holidays', {
+      api.get('/leave/holidays', {
         params: {
-          month: format(monthStart, 'yyyy-MM'),
+          year: format(monthStart, 'yyyy'),
         },
       }).then(r => r.data).catch(() => []),
   });
