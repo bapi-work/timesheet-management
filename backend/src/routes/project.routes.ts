@@ -140,12 +140,13 @@ router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res:
   try {
     const project = await prisma.project.findFirst({
       where: { id: req.params.id, organizationId: req.user!.organizationId },
-      include: { _count: { select: { entries: true } } },
     });
     if (!project) throw new AppError('Project not found', 404);
-    if (project._count.entries > 0) throw new AppError('Cannot delete project with timesheet entries. Archive it instead.', 400);
 
-    await prisma.project.delete({ where: { id: req.params.id } });
+    await prisma.$transaction([
+      prisma.timesheetEntry.updateMany({ where: { projectId: req.params.id }, data: { projectId: null, taskId: null } }),
+      prisma.project.delete({ where: { id: req.params.id } }),
+    ]);
     res.json({ message: 'Project deleted' });
   } catch (err) {
     next(err);
