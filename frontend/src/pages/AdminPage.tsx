@@ -334,7 +334,7 @@ export default function AdminPage() {
                       {(country || region) && (
                         <p className="text-xs text-primary-600 mt-0.5">{[country, region].filter(Boolean).join(' › ')}</p>
                       )}
-                      {h.isOptional && <span className="text-xs text-orange-500">Optional</span>}
+                      {!!(h.isOptional) && <span className="text-xs text-orange-500">Optional</span>}
                     </div>
                     <button onClick={() => deleteHolidayMutation.mutate(h.id as string)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
                   </div>
