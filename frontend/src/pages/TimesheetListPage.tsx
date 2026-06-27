@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import api from '../lib/api';
-import { ClockIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ClockIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { hasRole, ADMIN_ROLES } from '../lib/roles';
 import toast from 'react-hot-toast';
@@ -26,6 +26,7 @@ export default function TimesheetListPage() {
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
   const isAdmin = hasRole(user?.role, ADMIN_ROLES);
+  const isManager = hasRole(user?.role, ['SYSTEM_ADMIN', 'HR_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER', 'TEAM_LEAD']);
 
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
@@ -37,7 +38,7 @@ export default function TimesheetListPage() {
 
   const params = new URLSearchParams({ page: String(page), limit: '15' });
   if (status) params.set('status', status);
-  if (isAdmin && userFilter) params.set('userId', userFilter);
+  if (isManager && userFilter) params.set('userId', userFilter);
 
   const { data, isLoading } = useQuery({
     queryKey: ['timesheets', page, status, userFilter],
@@ -47,7 +48,13 @@ export default function TimesheetListPage() {
   const { data: usersData } = useQuery({
     queryKey: ['users-list'],
     queryFn: () => api.get('/users?limit=200').then(r => r.data),
-    enabled: isAdmin,
+    enabled: isManager,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/timesheets/${id}`),
+    onSuccess: () => { toast.success('Timesheet deleted'); queryClient.invalidateQueries({ queryKey: ['timesheets'] }); },
+    onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Cannot delete timesheet'),
   });
 
   const uploadMutation = useMutation({
@@ -87,7 +94,7 @@ export default function TimesheetListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">
-          {isAdmin ? 'All Timesheets' : 'My Timesheets'}
+          {isAdmin ? 'All Timesheets' : isManager ? 'Timesheet History' : 'My Timesheets'}
         </h1>
         <div className="flex gap-2">
           <button onClick={() => { setShowUpload(true); setUploadResult(null); }} className="btn-secondary">
@@ -197,7 +204,7 @@ export default function TimesheetListPage() {
           </button>
         ))}
 
-        {isAdmin && (
+        {isManager && (
           <select
             value={userFilter}
             onChange={e => { setUserFilter(e.target.value); setPage(1); }}
@@ -217,11 +224,10 @@ export default function TimesheetListPage() {
         <table className="table">
           <thead>
             <tr>
-              {isAdmin && <th className="th">Employee</th>}
+              {isManager && <th className="th">Employee</th>}
               <th className="th">Period</th>
               <th className="th">Total Hours</th>
               <th className="th">Billable</th>
-              <th className="th">Overtime</th>
               <th className="th">Status</th>
               <th className="th">Submitted</th>
               <th className="th"></th>
@@ -230,13 +236,13 @@ export default function TimesheetListPage() {
           <tbody className="divide-y divide-gray-100 bg-white">
             {isLoading ? (
               <tr>
-                <td colSpan={isAdmin ? 8 : 7} className="td text-center py-10">
+                <td colSpan={isAdmin ? 7 : 6} className="td text-center py-10">
                   <div className="h-6 w-6 border-2 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" />
                 </td>
               </tr>
             ) : (data?.timesheets || []).length === 0 ? (
               <tr>
-                <td colSpan={isAdmin ? 8 : 7} className="td text-center text-gray-400 py-10">
+                <td colSpan={isAdmin ? 7 : 6} className="td text-center text-gray-400 py-10">
                   {status ? `No ${status.toLowerCase()} timesheets found` : 'No timesheets found'}
                 </td>
               </tr>
@@ -244,7 +250,7 @@ export default function TimesheetListPage() {
               const u = ts.user as Record<string, unknown> | undefined;
               return (
                 <tr key={ts.id as string} className="tr-hover">
-                  {isAdmin && (
+                  {isManager && (
                     <td className="td">
                       {u ? `${u.firstName as string} ${u.lastName as string}` : '—'}
                       {u?.employeeId ? <span className="ml-1 text-xs text-gray-400">({u.employeeId as string})</span> : null}
@@ -253,9 +259,8 @@ export default function TimesheetListPage() {
                   <td className="td font-medium">
                     {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
                   </td>
-                  <td className="td">{((ts.totalHours as number) || 0).toFixed(1)}h</td>
-                  <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(1)}h</td>
-                  <td className="td text-orange-600">{((ts.overtimeHours as number) || 0).toFixed(1)}h</td>
+                  <td className="td">{((ts.totalHours as number) || 0).toFixed(2)}h</td>
+                  <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(2)}h</td>
                   <td className="td">
                     <span className={STATUS_BADGE[ts.status as string] || 'badge-gray'}>{ts.status as string}</span>
                   </td>
@@ -263,7 +268,18 @@ export default function TimesheetListPage() {
                     {ts.submittedAt ? format(new Date(ts.submittedAt as string), 'MMM d, yyyy') : '—'}
                   </td>
                   <td className="td">
-                    <Link to={`/timesheets/${ts.id}`} className="text-primary-600 hover:underline text-sm">View</Link>
+                    <div className="flex items-center gap-2">
+                      <Link to={`/timesheets/${ts.id}`} className="text-primary-600 hover:underline text-sm">View</Link>
+                      {ts.status === 'DRAFT' && !isAdmin && (
+                        <button
+                          onClick={() => { if (window.confirm('Delete this draft timesheet? This cannot be undone.')) deleteMutation.mutate(ts.id as string); }}
+                          className="text-red-400 hover:text-red-600"
+                          title="Delete draft"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

@@ -153,6 +153,34 @@ router.delete('/:id/members/:userId', authorize(...MANAGER_ROLES), async (req: A
   }
 });
 
+// Assign an entire team to a client — adds all team members as client members
+router.post('/:id/teams', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { teamId } = req.body;
+    const client = await prisma.client.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!client) throw new AppError('Client not found', 404);
+
+    const team = await prisma.team.findFirst({
+      where: { id: teamId, organizationId: req.user!.organizationId },
+      include: { members: { select: { userId: true } } },
+    });
+    if (!team) throw new AppError('Team not found', 404);
+
+    await Promise.all(
+      team.members.map(m =>
+        prisma.clientMember.upsert({
+          where: { clientId_userId: { clientId: req.params.id, userId: m.userId } },
+          update: {},
+          create: { clientId: req.params.id, userId: m.userId },
+        })
+      )
+    );
+    res.json({ message: `${team.members.length} members assigned from team ${team.name}` });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = clientSchema.parse(req.body);

@@ -84,6 +84,121 @@ function AddMemberModal({ projectId, existingMemberIds, onClose }: { projectId: 
   );
 }
 
+interface ProjectEditFormData {
+  name: string;
+  code: string;
+  description: string;
+  clientId: string;
+  billable: boolean;
+  status: string;
+  startDate: string;
+  endDate: string;
+}
+
+function ProjectEditModal({ project, onClose }: { project: Record<string, unknown>; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { register, handleSubmit, formState: { errors } } = useForm<ProjectEditFormData>({
+    defaultValues: {
+      name: (project.name as string) || '',
+      code: (project.code as string) || '',
+      description: (project.description as string) || '',
+      clientId: (project.client as { id: string } | null)?.id || '',
+      billable: (project.billable as boolean) ?? true,
+      status: (project.status as string) || 'ACTIVE',
+      startDate: project.startDate ? (project.startDate as string).slice(0, 10) : '',
+      endDate: project.endDate ? (project.endDate as string).slice(0, 10) : '',
+    },
+  });
+
+  const { data: clientsData } = useQuery({
+    queryKey: ['clients-all'],
+    queryFn: () => api.get('/clients?limit=200').then(r => r.data),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (data: ProjectEditFormData) => api.put(`/projects/${project.id as string}`, {
+      ...data,
+      clientId: data.clientId || undefined,
+      startDate: data.startDate || undefined,
+      endDate: data.endDate || undefined,
+    }),
+    onSuccess: () => {
+      toast.success('Project updated');
+      qc.invalidateQueries({ queryKey: ['project', project.id as string] });
+      onClose();
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Failed to update project'),
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="font-semibold text-gray-900">Edit Project</h3>
+          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400" /></button>
+        </div>
+        <form onSubmit={handleSubmit(d => mutation.mutate(d))} className="p-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Project Name *</label>
+              <input {...register('name', { required: true })} className={`input ${errors.name ? 'input-error' : ''}`} />
+            </div>
+            <div>
+              <label className="label">Code *</label>
+              <input {...register('code', { required: true })} className={`input ${errors.code ? 'input-error' : ''}`} />
+            </div>
+          </div>
+          <div>
+            <label className="label">Description</label>
+            <textarea {...register('description')} className="input" rows={2} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Client</label>
+              <select {...register('clientId')} className="input">
+                <option value="">No client (Internal)</option>
+                {((clientsData?.clients || clientsData) as { id: string; name: string }[] || []).map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Status</label>
+              <select {...register('status')} className="input">
+                <option value="ACTIVE">Active</option>
+                <option value="ON_HOLD">On Hold</option>
+                <option value="COMPLETED">Completed</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="ARCHIVED">Archived</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Start Date</label>
+              <input {...register('startDate')} type="date" className="input" />
+            </div>
+            <div>
+              <label className="label">End Date</label>
+              <input {...register('endDate')} type="date" className="input" />
+            </div>
+          </div>
+          <label className="flex items-center gap-2">
+            <input {...register('billable')} type="checkbox" className="rounded" />
+            <span className="text-sm">Billable Project</span>
+          </label>
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={mutation.isPending} className="btn-primary">
+              {mutation.isPending ? 'Saving…' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 interface Task {
   id: string;
   name: string;
@@ -240,6 +355,7 @@ export default function ProjectDetailPage() {
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
   const [showAddMember, setShowAddMember] = useState(false);
   const [showAddTeam, setShowAddTeam] = useState(false);
+  const [showEditProject, setShowEditProject] = useState(false);
   const [taskModal, setTaskModal] = useState<{ open: boolean; task?: Task }>({ open: false });
   const [editingBudget, setEditingBudget] = useState(false);
   const [budgetValue, setBudgetValue] = useState('');
@@ -331,14 +447,23 @@ export default function ProjectDetailPage() {
           <span className={project.billable ? 'badge-green' : 'badge-gray'}>{project.billable ? 'Billable' : 'Internal'}</span>
           <span className={project.status === 'ACTIVE' ? 'badge-green' : 'badge-yellow'}>{project.status}</span>
           {isManager && (
-            <button
-              onClick={() => { if (confirm(`Delete project "${project.name}"? This cannot be undone.`)) deleteProjectMutation.mutate(); }}
-              disabled={deleteProjectMutation.isPending}
-              className="btn-danger btn-sm flex items-center gap-1"
-              title="Delete project"
-            >
-              <TrashIcon className="h-4 w-4" /> Delete Project
-            </button>
+            <>
+              <button
+                onClick={() => setShowEditProject(true)}
+                className="btn-secondary btn-sm flex items-center gap-1"
+                title="Edit project"
+              >
+                <PencilIcon className="h-4 w-4" /> Edit
+              </button>
+              <button
+                onClick={() => { if (confirm(`Delete project "${project.name}"? This cannot be undone.`)) deleteProjectMutation.mutate(); }}
+                disabled={deleteProjectMutation.isPending}
+                className="btn-danger btn-sm flex items-center gap-1"
+                title="Delete project"
+              >
+                <TrashIcon className="h-4 w-4" /> Delete Project
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -532,6 +657,13 @@ export default function ProjectDetailPage() {
           projectId={id!}
           task={taskModal.task}
           onClose={() => setTaskModal({ open: false })}
+        />
+      )}
+
+      {showEditProject && (
+        <ProjectEditModal
+          project={project as Record<string, unknown>}
+          onClose={() => setShowEditProject(false)}
         />
       )}
     </div>

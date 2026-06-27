@@ -27,6 +27,7 @@ export default function LeavePage() {
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
   const [rejectComment, setRejectComment] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [showBulkEntitlementModal, setShowBulkEntitlementModal] = useState(false);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
   const docInputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +133,18 @@ export default function LeavePage() {
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
+  const bulkEntitlementMutation = useMutation({
+    mutationFn: (data: { leaveType: string; year: number; entitled: number }) => api.post('/leave/balances/bulk-entitlement', data),
+    onSuccess: (r) => { toast.success(r.data.message); qc.invalidateQueries({ queryKey: ['leave', 'all-balances'] }); setShowBulkEntitlementModal(false); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
+  const deleteBalanceMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/leave/balances/${id}`),
+    onSuccess: () => { toast.success('Balance record deleted'); qc.invalidateQueries({ queryKey: ['leave', 'all-balances'] }); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
   const openBalanceModal = (userId: string, name: string, leaveType: string, current: number) => {
     setBalanceTarget({ userId, name, leaveType, current });
     setValue('entitled', current);
@@ -162,6 +175,7 @@ export default function LeavePage() {
               <p className="text-sm text-gray-700 mt-1">
                 {format(new Date(req.startDate as string), 'MMM d')} – {format(new Date(req.endDate as string), 'MMM d, yyyy')}
                 <span className="ml-2 text-gray-500">({req.days as number} day{(req.days as number) !== 1 ? 's' : ''})</span>
+                {req.dayType === 'HALF_DAY' && <span className="ml-2 badge-yellow text-xs">Half Day</span>}
               </p>
               {!!(req.reason) && <p className="text-xs text-gray-400 mt-0.5">{req.reason as string}</p>}
               {!!(req.approverComments) && <p className="text-xs text-orange-600 mt-0.5">"{req.approverComments as string}"</p>}
@@ -302,9 +316,16 @@ export default function LeavePage() {
 
           {/* Leave Balances Management */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-gray-900">Leave Balances</h2>
-              <span className="text-sm text-gray-500">{new Date().getFullYear()}</span>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h2 className="font-semibold text-gray-900">Leave Balances — {new Date().getFullYear()}</h2>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setShowBulkEntitlementModal(true)}
+                  className="btn-secondary btn-sm"
+                >
+                  Bulk Set Entitlement
+                </button>
+              </div>
             </div>
             {(allBalances as Record<string, unknown>[]).length === 0 ? (
               <div className="card text-center py-8 text-gray-400">No leave balances configured. Approve leave requests to create them, or set entitlements manually.</div>
@@ -335,7 +356,10 @@ export default function LeavePage() {
                             <span className={remaining < 0 ? 'text-red-600 font-semibold' : remaining === 0 ? 'text-orange-500' : 'text-green-600'}>{remaining}</span>
                           </td>
                           <td className="td">
-                            <button onClick={() => openBalanceModal(b.userId as string, `${u?.firstName} ${u?.lastName}`, b.leaveType as string, b.entitled as number)} className="btn-secondary btn-sm">Edit</button>
+                            <div className="flex gap-2">
+                              <button onClick={() => openBalanceModal(b.userId as string, `${u?.firstName} ${u?.lastName}`, b.leaveType as string, b.entitled as number)} className="btn-secondary btn-sm">Edit</button>
+                              <button onClick={() => { if (window.confirm('Delete this balance record?')) deleteBalanceMutation.mutate(b.id as string); }} className="text-red-400 hover:text-red-600 btn-sm"><TrashIcon className="h-4 w-4" /></button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -400,6 +424,13 @@ export default function LeavePage() {
                   <label className="label">End Date *</label>
                   <input {...register('endDate', { required: true })} type="date" className="input" />
                 </div>
+              </div>
+              <div>
+                <label className="label">Day Type</label>
+                <select {...register('dayType')} className="input">
+                  <option value="FULL_DAY">Full Day</option>
+                  <option value="HALF_DAY">Half Day</option>
+                </select>
               </div>
               <div>
                 <label className="label">Reason</label>
@@ -468,6 +499,48 @@ export default function LeavePage() {
               <div className="flex gap-3 justify-end">
                 <button type="button" onClick={() => { setShowBalanceModal(false); setBalanceTarget(null); resetBalance(); }} className="btn-secondary">Cancel</button>
                 <button type="submit" disabled={updateBalanceMutation.isPending} className="btn-primary">Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Entitlement Modal */}
+      {showBulkEntitlementModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-gray-900">Bulk Set Leave Entitlement</h3>
+            <p className="text-sm text-gray-500">Set the entitled days for <strong>all active employees</strong> for a given leave type and year.</p>
+            <form onSubmit={e => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              bulkEntitlementMutation.mutate({
+                leaveType: fd.get('leaveType') as string,
+                year: Number(fd.get('year')),
+                entitled: Number(fd.get('entitled')),
+              });
+            }} className="space-y-4">
+              <div>
+                <label className="label">Leave Type *</label>
+                <select name="leaveType" required className="input">
+                  {LEAVE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Year *</label>
+                  <input name="year" type="number" required defaultValue={new Date().getFullYear()} className="input" />
+                </div>
+                <div>
+                  <label className="label">Entitled Days *</label>
+                  <input name="entitled" type="number" required min={0} className="input" placeholder="e.g. 14" />
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => setShowBulkEntitlementModal(false)} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={bulkEntitlementMutation.isPending} className="btn-primary">
+                  {bulkEntitlementMutation.isPending ? 'Setting…' : 'Set for All Employees'}
+                </button>
               </div>
             </form>
           </div>

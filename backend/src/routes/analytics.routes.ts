@@ -87,12 +87,12 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
         }),
       ]);
 
-      // Derive display status: if timesheet is DRAFT but day submissions exist, show best day-level status
+      // Derive display status: use timesheet status directly, but upgrade DRAFT if day submissions exist
       let currentTimesheetStatus = myTimesheet?.status || 'NOT_STARTED';
       if (currentTimesheetStatus === 'DRAFT' && weekDaySubmissions.length > 0) {
         const hasApproved = weekDaySubmissions.some(s => s.status === 'APPROVED');
         const hasSubmitted = weekDaySubmissions.some(s => s.status === 'SUBMITTED');
-        if (hasApproved) currentTimesheetStatus = 'APPROVED';
+        if (hasApproved && !hasSubmitted) currentTimesheetStatus = 'APPROVED';
         else if (hasSubmitted) currentTimesheetStatus = 'SUBMITTED';
       }
 

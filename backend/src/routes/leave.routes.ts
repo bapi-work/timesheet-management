@@ -72,11 +72,29 @@ router.get('/requests', async (req: AuthRequest, res: Response, next: NextFuncti
 
 router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { leaveType, startDate, endDate, reason, documentUrl } = req.body;
+    const { leaveType, startDate, endDate, reason, documentUrl, dayType } = req.body;
 
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const rawDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const days = dayType === 'HALF_DAY' ? 0.5 : rawDays;
+    const year = start.getFullYear();
+
+    // Check leave balance if entitlement is configured
+    const balance = await prisma.leaveBalance.findUnique({
+      where: { userId_leaveType_year: { userId: req.user!.userId, leaveType, year } },
+    });
+    if (balance && balance.entitled > 0) {
+      const remaining = balance.entitled - balance.used - balance.pending;
+      if (days > remaining) {
+        throw new AppError(`Insufficient leave balance. Available: ${remaining} day(s), Requested: ${days} day(s)`, 400);
+      }
+      // Reserve pending balance
+      await prisma.leaveBalance.update({
+        where: { userId_leaveType_year: { userId: req.user!.userId, leaveType, year } },
+        data: { pending: { increment: days } },
+      });
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: req.user!.userId },
@@ -93,6 +111,7 @@ router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunct
         reason,
         documentUrl: documentUrl || null,
         approverId: user?.managerId || undefined,
+        dayType: dayType || 'FULL_DAY',
       },
     });
 
@@ -269,6 +288,38 @@ router.put('/balances', authorize(...ADMIN_ROLES), async (req: AuthRequest, res:
       create: { userId, leaveType, year: Number(year), entitled: Number(entitled), used: 0 },
     });
     res.json(balance);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HR Admin: bulk set entitlements for all active employees for a leave type + year
+router.post('/balances/bulk-entitlement', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { leaveType, year, entitled } = req.body;
+    if (!leaveType || !year || entitled === undefined) throw new AppError('leaveType, year, entitled are required', 400);
+    const users = await prisma.user.findMany({
+      where: { organizationId: req.user!.organizationId, isActive: true },
+      select: { id: true },
+    });
+    await Promise.all(users.map(u =>
+      prisma.leaveBalance.upsert({
+        where: { userId_leaveType_year: { userId: u.id, leaveType, year: Number(year) } },
+        update: { entitled: Number(entitled) },
+        create: { userId: u.id, leaveType, year: Number(year), entitled: Number(entitled), used: 0, pending: 0 },
+      })
+    ));
+    res.json({ message: `Entitlement set for ${users.length} employees` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HR Admin: delete leave balance record
+router.delete('/balances/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    await prisma.leaveBalance.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Deleted' });
   } catch (err) {
     next(err);
   }

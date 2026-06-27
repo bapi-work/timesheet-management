@@ -177,11 +177,32 @@ router.get('/export-employees', async (req: AuthRequest, res: Response, next: Ne
 
 router.post('/holidays', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, date, isOptional } = req.body;
+    const { name, date, isOptional, country, region } = req.body;
+    const locations: string[] = [];
+    if (country) locations.push(country);
+    if (region) locations.push(region);
     const holiday = await prisma.holiday.create({
-      data: { name, date: new Date(date), isOptional: isOptional ?? false, organizationId: req.user!.organizationId },
+      data: { name, date: new Date(date), isOptional: isOptional ?? false, organizationId: req.user!.organizationId, locations },
     });
     res.status(201).json(holiday);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/holidays/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, date, isOptional, country, region } = req.body;
+    const holiday = await prisma.holiday.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!holiday) throw new AppError('Holiday not found', 404);
+    const locations: string[] = [];
+    if (country) locations.push(country);
+    if (region) locations.push(region);
+    const updated = await prisma.holiday.update({
+      where: { id: req.params.id },
+      data: { name, date: date ? new Date(date) : undefined, isOptional: isOptional ?? holiday.isOptional, locations },
+    });
+    res.json(updated);
   } catch (err) {
     next(err);
   }

@@ -95,11 +95,60 @@ function AddMemberModal({ clientId, existingMemberIds, onClose }: { clientId: st
   );
 }
 
+function AddTeamModal({ clientId, onClose }: { clientId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [teamId, setTeamId] = useState('');
+
+  const { data: teamsData } = useQuery({
+    queryKey: ['teams-list'],
+    queryFn: () => api.get('/teams').then(r => r.data?.teams || r.data || []),
+  });
+  const teams: { id: string; name: string }[] = teamsData || [];
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/clients/${clientId}/teams`, { teamId }),
+    onSuccess: () => {
+      toast.success('Team assigned to client');
+      qc.invalidateQueries({ queryKey: ['client', clientId] });
+      onClose();
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Failed to assign team'),
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="font-semibold text-gray-900">Assign Team to Client</h3>
+          <button onClick={onClose}><XMarkIcon className="h-5 w-5 text-gray-400" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="label">Team *</label>
+            <select value={teamId} onChange={e => setTeamId(e.target.value)} className="input">
+              <option value="">Select team…</option>
+              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <p className="text-xs text-gray-400">All members of the selected team will be added as client members.</p>
+        </div>
+        <div className="flex justify-end gap-2 p-4 border-t">
+          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button onClick={() => mutation.mutate()} disabled={!teamId || mutation.isPending} className="btn-primary">
+            {mutation.isPending ? 'Assigning…' : 'Assign Team'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const user = useAuthStore(s => s.user);
   const isManager = hasRole(user?.role, MANAGEMENT_ROLES);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showAddTeam, setShowAddTeam] = useState(false);
   const qc = useQueryClient();
 
   const { data: client, isLoading } = useQuery({
@@ -205,9 +254,14 @@ export default function ClientDetailPage() {
             <h2 className="font-semibold text-gray-900">Assigned Employees ({client.clientMembers?.length || 0})</h2>
           </div>
           {isManager && (
-            <button onClick={() => setShowAddMember(true)} className="btn-primary btn-sm flex items-center gap-1.5">
-              <UserPlusIcon className="h-4 w-4" /> Add Employee
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowAddTeam(true)} className="btn-secondary btn-sm flex items-center gap-1.5">
+                <UserGroupIcon className="h-4 w-4" /> Assign Team
+              </button>
+              <button onClick={() => setShowAddMember(true)} className="btn-primary btn-sm flex items-center gap-1.5">
+                <UserPlusIcon className="h-4 w-4" /> Add Employee
+              </button>
+            </div>
           )}
         </div>
         {!client.clientMembers?.length ? (
@@ -279,6 +333,13 @@ export default function ClientDetailPage() {
           clientId={id!}
           existingMemberIds={memberIds}
           onClose={() => setShowAddMember(false)}
+        />
+      )}
+
+      {showAddTeam && (
+        <AddTeamModal
+          clientId={id!}
+          onClose={() => setShowAddTeam(false)}
         />
       )}
     </div>

@@ -77,16 +77,45 @@ function deriveDisplayStatus(timesheetStatus: string, daySubmissions: DaySubmiss
   return timesheetStatus;
 }
 
-// Confirmation dialog helper
+// Confirmation modal component
+function ConfirmModal({ message, onConfirm, onCancel, confirmLabel = 'Confirm', danger = false }: {
+  message: string; onConfirm: () => void; onCancel: () => void;
+  confirmLabel?: string; danger?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4">
+        <p className="text-gray-800 font-medium">{message}</p>
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="btn-secondary btn-sm">Cancel</button>
+          <button onClick={onConfirm} className={danger ? 'btn-danger btn-sm' : 'btn-primary btn-sm'}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Confirmation dialog hook — uses state-driven modal instead of window.confirm
 function useConfirm() {
-  return (message: string): Promise<boolean> =>
-    new Promise(resolve => resolve(window.confirm(message)));
+  const [state, setState] = useState<{ message: string; resolve: (v: boolean) => void; danger?: boolean; confirmLabel?: string } | null>(null);
+  const confirm = (message: string, opts?: { danger?: boolean; confirmLabel?: string }): Promise<boolean> =>
+    new Promise(resolve => setState({ message, resolve, ...opts }));
+  const modal = state ? (
+    <ConfirmModal
+      message={state.message}
+      danger={state.danger}
+      confirmLabel={state.confirmLabel}
+      onConfirm={() => { state.resolve(true); setState(null); }}
+      onCancel={() => { state.resolve(false); setState(null); }}
+    />
+  ) : null;
+  return { confirm, modal };
 }
 
 export default function TimesheetPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
-  const confirm = useConfirm();
+  const { confirm, modal: confirmModal } = useConfirm();
   const [addingDay, setAddingDay] = useState<string | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -121,14 +150,14 @@ export default function TimesheetPage() {
     enabled: !!timesheet,
   });
 
-  const approvedLeaveDays = new Set<string>();
-  const leaveRequests: Array<{ startDate: string; endDate: string; leaveType: string; status: string }> =
+  const approvedLeaveDays = new Map<string, { leaveType: string; dayType: string }>();
+  const leaveRequests: Array<{ startDate: string; endDate: string; leaveType: string; status: string; dayType?: string }> =
     leaveData?.requests || [];
   leaveRequests
     .filter(l => l.status === 'APPROVED')
     .forEach(l => {
       eachDay({ start: new Date(l.startDate), end: new Date(l.endDate) })
-        .forEach(d => approvedLeaveDays.add(format(d, 'yyyy-MM-dd')));
+        .forEach(d => approvedLeaveDays.set(format(d, 'yyyy-MM-dd'), { leaveType: l.leaveType, dayType: l.dayType || 'FULL_DAY' }));
     });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['timesheet', id, weekOffset] });
@@ -174,7 +203,7 @@ export default function TimesheetPage() {
       return entries.length > 0 && (!daySub || daySub.status === 'REJECTED') && !isWeekend(day);
     });
     if (!draftDays.length) { toast('No draft days to submit'); return; }
-    const ok = await confirm(`Submit all ${draftDays.length} draft day(s) for approval?`);
+    const ok = await confirm(`Submit all ${draftDays.length} draft day(s) for approval?`, { confirmLabel: 'Submit' });
     if (!ok) return;
     for (const day of draftDays) {
       await api.post(`/timesheets/${timesheet.id}/days/${format(day, 'yyyy-MM-dd')}/submit`).catch(() => {});
@@ -184,7 +213,7 @@ export default function TimesheetPage() {
   };
 
   const handleDeleteEntry = async (entryId: string) => {
-    const ok = await confirm('Delete this time entry? This cannot be undone.');
+    const ok = await confirm('Delete this time entry? This cannot be undone.', { danger: true, confirmLabel: 'Delete' });
     if (ok) deleteEntry.mutate(entryId);
   };
 
@@ -320,7 +349,9 @@ export default function TimesheetPage() {
             const isDayApproved  = daySub?.status === 'APPROVED';
             const isDaySubmitted = daySub?.status === 'SUBMITTED';
             const isDayRejected  = daySub?.status === 'REJECTED';
-            const isLeaveDay     = approvedLeaveDays.has(dateKey);
+            const leaveInfo      = approvedLeaveDays.get(dateKey);
+            const isLeaveDay     = !!leaveInfo;
+            const isHalfDay      = leaveInfo?.dayType === 'HALF_DAY';
 
             const dayEditable = !timesheetLocked && !isDayApproved;
 
@@ -331,14 +362,15 @@ export default function TimesheetPage() {
                   'px-6 py-4',
                   isWknd && 'bg-gray-50',
                   isDayApproved && 'bg-green-50/40',
-                  isLeaveDay && !isDayApproved && 'bg-orange-50/40',
+                  isLeaveDay && !isHalfDay && !isDayApproved && 'bg-orange-50/40',
+                  isHalfDay && !isDayApproved && 'bg-yellow-50/40',
                 )}
               >
                 <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                   <div className="flex items-center gap-3">
                     <div className={clsx('text-center w-10', isWknd && !isDayApproved && 'opacity-50')}>
                       <p className="text-xs text-gray-500">{format(day, 'EEE')}</p>
-                      <p className={clsx('text-lg font-bold', isDayApproved ? 'text-green-700' : isLeaveDay ? 'text-orange-600' : 'text-gray-900')}>{format(day, 'd')}</p>
+                      <p className={clsx('text-lg font-bold', isDayApproved ? 'text-green-700' : isHalfDay ? 'text-yellow-600' : isLeaveDay ? 'text-orange-600' : 'text-gray-900')}>{format(day, 'd')}</p>
                     </div>
                     {dayTotal > 0 && (
                       <span className={clsx('text-sm font-semibold', dayTotal >= 8 ? 'text-green-600' : 'text-orange-600')}>
@@ -347,8 +379,8 @@ export default function TimesheetPage() {
                     )}
                     {/* Leave indicator */}
                     {isLeaveDay && (
-                      <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700 border border-orange-200">
-                        🏖 On Leave
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${isHalfDay ? 'bg-yellow-100 text-yellow-700 border-yellow-200' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>
+                        {isHalfDay ? '½ Half-Day Leave' : '🏖 Full-Day Leave'}
                       </span>
                     )}
                     {/* Day status badge */}
@@ -482,6 +514,8 @@ export default function TimesheetPage() {
         <p>• Click <strong>Withdraw</strong> to cancel a pending submission and make changes.</p>
         <p>• Hours are tracked to 2 decimal places in 0.25 increments.</p>
       </div>
+
+      {confirmModal}
     </div>
   );
 }
@@ -530,28 +564,12 @@ function EditEntryForm({
       <p className="text-xs font-semibold text-blue-700 mb-1">Editing Entry</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="label">Project</label>
-          <select {...register('projectId')} className="input">
-            <option value="">No project</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="label">Task</label>
-          <select {...register('taskId')} className="input" disabled={!selectedProject?.tasks?.length}
-            onChange={e => { register('taskId').onChange(e); handleTaskChange(e.target.value); }}>
-            <option value="">No task</option>
-            {(selectedProject?.tasks || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Category</label>
-          <select {...register('category')} className="input">
-            <option value="">Select category</option>
+          <label className="label">Category *</label>
+          <select {...register('category', { required: 'Category is required' })} className={`input ${errors.category ? 'input-error' : ''}`}>
+            <option value="">Select category…</option>
             {ENTRY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          {errors.category && <p className="text-xs text-red-500 mt-0.5">{errors.category.message}</p>}
         </div>
         <div>
           <label className="label">Hours *</label>
@@ -561,6 +579,29 @@ function EditEntryForm({
             className={`input ${errors.hours ? 'input-error' : ''}`}
           />
           {errors.hours && <p className="text-xs text-red-500 mt-0.5">Min 0.25h, max 24h</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Project *</label>
+          <select {...register('projectId', { required: 'Project is required' })} className={`input ${errors.projectId ? 'input-error' : ''}`}>
+            <option value="">Select project…</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {errors.projectId && <p className="text-xs text-red-500 mt-0.5">{errors.projectId.message}</p>}
+        </div>
+        <div>
+          <label className="label">Task *</label>
+          <select
+            {...register('taskId', { required: 'Task is required' })}
+            className={`input ${errors.taskId ? 'input-error' : ''}`}
+            disabled={!selectedProject?.tasks?.length}
+            onChange={e => { register('taskId').onChange(e); handleTaskChange(e.target.value); }}
+          >
+            <option value="">Select task…</option>
+            {(selectedProject?.tasks || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          {errors.taskId && <p className="text-xs text-red-500 mt-0.5">{errors.taskId.message}</p>}
         </div>
       </div>
       <div>
@@ -637,36 +678,12 @@ function AddEntryForm({ timesheetId, date, projects, onDone, onCancel }: {
     <form onSubmit={handleSubmit(onSubmit)} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="label">Project</label>
-          <select
-            {...register('projectId')}
-            className="input"
-            onChange={e => { register('projectId').onChange(e); handleProjectChange(e.target.value); }}
-          >
-            <option value="">No project</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="label">Task</label>
-          <select
-            {...register('taskId')}
-            className="input"
-            disabled={!selectedProject?.tasks?.length}
-            onChange={e => { register('taskId').onChange(e); handleTaskChange(e.target.value); }}
-          >
-            <option value="">No task</option>
-            {(selectedProject?.tasks || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Category</label>
-          <select {...register('category')} className="input">
-            <option value="">Select category</option>
+          <label className="label">Category *</label>
+          <select {...register('category', { required: 'Category is required' })} className={`input ${errors.category ? 'input-error' : ''}`}>
+            <option value="">Select category…</option>
             {ENTRY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          {errors.category && <p className="text-xs text-red-500 mt-0.5">{errors.category.message as string}</p>}
         </div>
         <div>
           <label className="label">Hours *</label>
@@ -676,6 +693,33 @@ function AddEntryForm({ timesheetId, date, projects, onDone, onCancel }: {
             className={`input ${errors.hours ? 'input-error' : ''}`}
           />
           {errors.hours && <p className="text-xs text-red-500 mt-0.5">Min 0.25h (quarter-hour increments)</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="label">Project *</label>
+          <select
+            {...register('projectId', { required: 'Project is required' })}
+            className={`input ${errors.projectId ? 'input-error' : ''}`}
+            onChange={e => { register('projectId').onChange(e); handleProjectChange(e.target.value); }}
+          >
+            <option value="">Select project…</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {errors.projectId && <p className="text-xs text-red-500 mt-0.5">{errors.projectId.message as string}</p>}
+        </div>
+        <div>
+          <label className="label">Task *</label>
+          <select
+            {...register('taskId', { required: 'Task is required' })}
+            className={`input ${errors.taskId ? 'input-error' : ''}`}
+            disabled={!selectedProject?.tasks?.length}
+            onChange={e => { register('taskId').onChange(e); handleTaskChange(e.target.value); }}
+          >
+            <option value="">Select task…</option>
+            {(selectedProject?.tasks || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          {errors.taskId && <p className="text-xs text-red-500 mt-0.5">{errors.taskId.message as string}</p>}
         </div>
       </div>
       <div>

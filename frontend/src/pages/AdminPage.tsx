@@ -290,36 +290,59 @@ export default function AdminPage() {
       {tab === 'holidays' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="card space-y-4">
-            <h3 className="font-semibold">Add Holiday</h3>
+            <h3 className="font-semibold">Add Public Holiday</h3>
             <form onSubmit={hsHoliday(d => createHolidayMutation.mutate(d as Record<string, unknown>))} className="space-y-3">
               <div>
                 <label className="label">Name *</label>
-                <input {...regHoliday('name', { required: true })} className="input" placeholder="Holiday name" />
+                <input {...regHoliday('name', { required: true })} className="input" placeholder="e.g. National Day" />
               </div>
               <div>
                 <label className="label">Date *</label>
                 <input {...regHoliday('date', { required: true })} type="date" className="input" />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Country</label>
+                  <input {...regHoliday('country')} className="input" placeholder="e.g. Malaysia" />
+                </div>
+                <div>
+                  <label className="label">Region / State</label>
+                  <input {...regHoliday('region')} className="input" placeholder="e.g. Sabah, Sarawak" />
+                </div>
+              </div>
+              <p className="text-xs text-gray-400">Leave Country/Region blank to apply this holiday organisation-wide.</p>
               <label className="flex items-center gap-2">
                 <input {...regHoliday('isOptional')} type="checkbox" className="rounded" />
                 <span className="text-sm">Optional Holiday</span>
               </label>
-              <button type="submit" disabled={createHolidayMutation.isPending} className="btn-primary btn-sm">Add</button>
+              <button type="submit" disabled={createHolidayMutation.isPending} className="btn-primary btn-sm">Add Holiday</button>
             </form>
           </div>
 
           <div className="card p-0 overflow-hidden">
             <div className="px-4 py-3 border-b font-semibold text-sm">Holidays ({(holidays as unknown[]).length})</div>
-            <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
-              {(holidays as Record<string, unknown>[]).map(h => (
-                <div key={h.id as string} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
-                  <div>
-                    <p className="text-sm font-medium">{h.name as string}</p>
-                    <p className="text-xs text-gray-500">{format(new Date(h.date as string), 'EEEE, MMMM d, yyyy')}</p>
+            <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+              {(holidays as Record<string, unknown>[]).map(h => {
+                const locs = (h.locations as string[]) || [];
+                const country = locs[0] || '';
+                const region = locs[1] || '';
+                return (
+                  <div key={h.id as string} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                    <div>
+                      <p className="text-sm font-medium">{h.name as string}</p>
+                      <p className="text-xs text-gray-500">{format(new Date(h.date as string), 'EEEE, MMMM d, yyyy')}</p>
+                      {(country || region) && (
+                        <p className="text-xs text-primary-600 mt-0.5">{[country, region].filter(Boolean).join(' › ')}</p>
+                      )}
+                      {h.isOptional && <span className="text-xs text-orange-500">Optional</span>}
+                    </div>
+                    <button onClick={() => deleteHolidayMutation.mutate(h.id as string)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
                   </div>
-                  <button onClick={() => deleteHolidayMutation.mutate(h.id as string)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
-                </div>
-              ))}
+                );
+              })}
+              {!(holidays as unknown[]).length && (
+                <p className="px-4 py-6 text-sm text-gray-400 text-center">No holidays added yet</p>
+              )}
             </div>
           </div>
         </div>

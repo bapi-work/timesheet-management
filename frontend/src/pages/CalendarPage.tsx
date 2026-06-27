@@ -20,6 +20,7 @@ interface LeaveDay {
   endDate: string;
   leaveType: string;
   status: string;
+  dayType?: string;
 }
 
 interface Holiday {
@@ -225,8 +226,8 @@ export default function CalendarPage() {
                 )}
 
                 {leave && (
-                  <div className="text-xs bg-orange-100 text-orange-700 rounded px-1 py-0.5 mb-1 truncate">
-                    🏖 {leave.leaveType.charAt(0) + leave.leaveType.slice(1).toLowerCase()}
+                  <div className={`text-xs rounded px-1 py-0.5 mb-1 truncate ${leave.dayType === 'HALF_DAY' ? 'bg-yellow-100 text-yellow-700' : 'bg-orange-100 text-orange-700'}`}>
+                    {leave.dayType === 'HALF_DAY' ? '½' : '🏖'} {leave.leaveType.charAt(0) + leave.leaveType.slice(1).toLowerCase()}
                   </div>
                 )}
 

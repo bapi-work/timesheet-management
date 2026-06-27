@@ -408,6 +408,24 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response, next: NextFun
   }
 });
 
+router.delete('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
+    if (!timesheet) throw new AppError('Timesheet not found', 404);
+    if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
+    if (timesheet.status !== 'DRAFT') throw new AppError('Only draft timesheets can be deleted', 400);
+    await prisma.$transaction([
+      prisma.timesheetEntry.deleteMany({ where: { timesheetId: req.params.id } }),
+      prisma.daySubmission.deleteMany({ where: { timesheetId: req.params.id } }),
+      prisma.timesheetApproval.deleteMany({ where: { timesheetId: req.params.id } }),
+      prisma.timesheet.delete({ where: { id: req.params.id } }),
+    ]);
+    res.json({ message: 'Timesheet deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/:id/copy-previous', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
@@ -571,7 +589,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
 
     const projects = await prisma.project.findMany({
       where: { organizationId: req.user!.organizationId },
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, tasks: { select: { id: true, name: true } } },
     });
 
     const errors: string[] = [];
@@ -608,6 +626,16 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
         projectId = found.id;
       }
 
+      // Match task by name within the project (optional)
+      let taskId: string | undefined;
+      const taskRaw = String(row['taskname'] || row['task'] || '').trim();
+      if (taskRaw && projectId) {
+        const proj = projects.find(p => p.id === projectId) as typeof projects[0] & { tasks?: { id: string; name: string }[] };
+        const tasks = proj?.tasks || [];
+        const foundTask = tasks.find(t => t.name.toLowerCase() === taskRaw.toLowerCase());
+        if (foundTask) taskId = foundTask.id;
+      }
+
       const billableRaw = String(row['billable'] || 'Y').trim().toUpperCase();
       const isBillable = billableRaw === 'Y' || billableRaw === 'YES' || billableRaw === 'TRUE' || billableRaw === '1';
 
@@ -626,7 +654,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
         timesheetKey,
         periodStart,
         periodEnd,
-        entry: { date: entryDay.toISOString(), projectId, description, hours, isBillable, entryType: entryType as 'REGULAR' | 'OVERTIME' | 'COMP_OFF' | 'ON_CALL' },
+        entry: { date: entryDay.toISOString(), projectId, taskId, description, hours, isBillable, entryType: entryType as 'REGULAR' | 'OVERTIME' | 'COMP_OFF' | 'ON_CALL' },
       });
 
       if (!timesheetMap.has(timesheetKey)) {
@@ -653,7 +681,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
           timesheet = await tx.timesheet.create({
             data: { userId: req.user!.userId, periodStart: weekData.periodStart, periodEnd: weekData.periodEnd },
           });
-        } else if (['APPROVED', 'LOCKED'].includes(timesheet.status)) {
+        } else if (['SUBMITTED', 'APPROVED', 'LOCKED'].includes(timesheet.status)) {
           errors.push(`Week of ${format(weekData.periodStart, 'MMM d')}: Timesheet is ${timesheet.status} and cannot be modified`);
           continue;
         }
@@ -664,6 +692,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
               timesheetId: timesheet.id,
               date: new Date(row.entry.date),
               projectId: row.entry.projectId,
+              taskId: row.entry.taskId,
               description: row.entry.description,
               hours: row.entry.hours,
               isBillable: row.entry.isBillable,

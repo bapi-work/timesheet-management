@@ -15,18 +15,25 @@ export default function ApprovalsPage() {
   const [comment, setComment] = useState('');
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
+  const [teamFilter, setTeamFilter] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Teams for filter
+  const { data: teamsData = [] } = useQuery({
+    queryKey: ['teams-list'],
+    queryFn: () => api.get('/teams').then(r => r.data?.teams || r.data || []),
+  });
 
   // Day submissions
   const { data: dayPending = [], isLoading: dayLoading } = useQuery({
-    queryKey: ['approvals', 'day-pending'],
-    queryFn: () => api.get('/approvals/day-submissions/pending').then(r => r.data),
+    queryKey: ['approvals', 'day-pending', teamFilter],
+    queryFn: () => api.get('/approvals/day-submissions/pending', { params: teamFilter ? { teamId: teamFilter } : {} }).then(r => r.data),
   });
 
   // Week approvals
   const { data: weekPending = [], isLoading: weekLoading } = useQuery({
-    queryKey: ['approvals', 'pending'],
-    queryFn: () => api.get('/approvals/pending').then(r => r.data),
+    queryKey: ['approvals', 'pending', teamFilter],
+    queryFn: () => api.get('/approvals/pending', { params: teamFilter ? { teamId: teamFilter } : {} }).then(r => r.data),
   });
 
   // History — approved day submissions
@@ -150,8 +157,16 @@ export default function ApprovalsPage() {
               {allDepts.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           )}
-          {(search || deptFilter) && (
-            <button onClick={() => { setSearch(''); setDeptFilter(''); }} className="btn-secondary btn-sm">Clear</button>
+          {(teamsData as { id: string; name: string }[]).length > 0 && (
+            <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)} className="input w-auto">
+              <option value="">All teams</option>
+              {(teamsData as { id: string; name: string }[]).map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          )}
+          {(search || deptFilter || teamFilter) && (
+            <button onClick={() => { setSearch(''); setDeptFilter(''); setTeamFilter(''); }} className="btn-secondary btn-sm">Clear</button>
           )}
         </div>
       )}

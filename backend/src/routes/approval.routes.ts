@@ -14,18 +14,32 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
     const role = req.user!.role;
     const userId = req.user!.userId;
     const orgId = req.user!.organizationId;
+    const { teamId } = req.query;
+
+    // Build optional team member filter
+    let teamMemberIds: string[] | undefined;
+    if (teamId) {
+      const team = await prisma.team.findFirst({
+        where: { id: String(teamId), organizationId: orgId },
+        include: { members: { select: { userId: true } } },
+      });
+      if (team) teamMemberIds = team.members.map(m => m.userId);
+    }
 
     // HR_ADMIN: see all pending approvals across org (their assigned + all SUBMITTED)
     if (role === 'HR_ADMIN' || role === 'SYSTEM_ADMIN') {
       const approvals = await prisma.timesheetApproval.findMany({
         where: {
           status: 'PENDING',
-          timesheet: { user: { organizationId: orgId } },
+          timesheet: {
+            user: { organizationId: orgId },
+            ...(teamMemberIds ? { userId: { in: teamMemberIds } } : {}),
+          },
         },
         include: {
           timesheet: {
             include: {
-              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } } } },
+              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teams: { include: { team: { select: { id: true, name: true } } } } } },
               entries: true,
             },
           },
@@ -41,20 +55,21 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
         where: { leadId: userId },
         include: { members: { select: { userId: true } } },
       });
-      const teamMemberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+      const allTeamMemberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+      const filteredMemberIds = teamMemberIds ?? allTeamMemberIds;
 
       const approvals = await prisma.timesheetApproval.findMany({
         where: {
           status: 'PENDING',
           OR: [
-            { approverId: userId },
-            { timesheet: { userId: { in: teamMemberIds } } },
+            { approverId: userId, timesheet: { ...(teamMemberIds ? { userId: { in: filteredMemberIds } } : {}) } },
+            { timesheet: { userId: { in: filteredMemberIds } } },
           ],
         },
         include: {
           timesheet: {
             include: {
-              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } } } },
+              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teams: { include: { team: { select: { id: true, name: true } } } } } },
               entries: true,
             },
           },
@@ -72,13 +87,17 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
       return res.json(unique);
     }
 
-    // Default: only assigned approvals
+    // Default: only assigned approvals (scoped to manager's direct reports)
     const approvals = await prisma.timesheetApproval.findMany({
-      where: { approverId: userId, status: 'PENDING' },
+      where: {
+        approverId: userId,
+        status: 'PENDING',
+        ...(teamMemberIds ? { timesheet: { userId: { in: teamMemberIds } } } : {}),
+      },
       include: {
         timesheet: {
           include: {
-            user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } } } },
+            user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teams: { include: { team: { select: { id: true, name: true } } } } } },
             entries: true,
           },
         },
@@ -312,21 +331,24 @@ router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, n
     const role = req.user!.role;
     const userId = req.user!.userId;
     const orgId = req.user!.organizationId;
+    const { teamId } = req.query;
 
-    let where: Record<string, unknown> = { status: 'SUBMITTED', timesheet: { user: { organizationId: orgId } } };
+    let teamFilterIds: string[] | undefined;
+    if (teamId) {
+      const team = await prisma.team.findFirst({ where: { id: String(teamId), organizationId: orgId }, include: { members: { select: { userId: true } } } });
+      if (team) teamFilterIds = team.members.map(m => m.userId);
+    }
+
+    let where: Record<string, unknown> = { status: 'SUBMITTED', timesheet: { user: { organizationId: orgId }, ...(teamFilterIds ? { userId: { in: teamFilterIds } } : {}) } };
 
     if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
-      // TEAM_LEAD: only their team members
       if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({
-          where: { leadId: userId },
-          include: { members: { select: { userId: true } } },
-        });
-        const memberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
+        const allMemberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+        const memberIds = teamFilterIds ? allMemberIds.filter(id => teamFilterIds!.includes(id)) : allMemberIds;
         where = { status: 'SUBMITTED', timesheet: { userId: { in: memberIds } } };
       } else {
-        // Regular managers: employees they manage
-        where = { status: 'SUBMITTED', timesheet: { user: { managerId: userId, organizationId: orgId } } };
+        where = { status: 'SUBMITTED', timesheet: { user: { managerId: userId, organizationId: orgId }, ...(teamFilterIds ? { userId: { in: teamFilterIds } } : {}) } };
       }
     }
 
@@ -434,9 +456,20 @@ router.post('/day-submissions/:id/approve', async (req: AuthRequest, res: Respon
       }
     }
 
-    await prisma.daySubmission.update({
-      where: { id: req.params.id },
-      data: { status: 'APPROVED', reviewedAt: new Date(), reviewedById: userId, comments: req.body.comments },
+    await prisma.$transaction(async (tx) => {
+      await tx.daySubmission.update({
+        where: { id: req.params.id },
+        data: { status: 'APPROVED', reviewedAt: new Date(), reviewedById: userId, comments: req.body.comments },
+      });
+      // Update parent timesheet status based on all day submissions
+      const allDaySubs = await tx.daySubmission.findMany({ where: { timesheetId: sub.timesheetId } });
+      const allApproved = allDaySubs.length > 0 && allDaySubs.every(s => s.id === req.params.id ? true : s.status === 'APPROVED');
+      const anySubmitted = allDaySubs.some(s => s.id !== req.params.id && s.status === 'SUBMITTED');
+      if (allApproved) {
+        await tx.timesheet.update({ where: { id: sub.timesheetId }, data: { status: 'APPROVED', approvedAt: new Date() } });
+      } else if (anySubmitted) {
+        await tx.timesheet.update({ where: { id: sub.timesheetId }, data: { status: 'SUBMITTED' } });
+      }
     });
 
     const dateLabel = format(new Date(sub.date), 'MMM d, yyyy');

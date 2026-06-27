@@ -139,7 +139,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <StatCard
               label="Total Billable Hours"
-              value={`${((dashboard?.billableHoursThisMonth || 0)).toFixed(0)}h`}
+              value={`${((dashboard?.billableHoursThisMonth || 0)).toFixed(2)}h`}
               icon={CurrencyDollarIcon}
               color="bg-green-500"
               sub="this month"
@@ -173,7 +173,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-gray-400 mt-0.5">Last 12 months — total vs billable</p>
               </div>
               <span className="text-sm font-semibold text-green-600">
-                All-time: {((dashboard?.totalBillableHoursAllTime || 0)).toFixed(0)}h billable
+                All-time: {((dashboard?.totalBillableHoursAllTime || 0)).toFixed(2)}h billable
               </span>
             </div>
             {monthlyChartData ? (
@@ -216,8 +216,8 @@ export default function DashboardPage() {
                         <tr key={i} className="tr-hover">
                           <td className="td font-medium">{e.name as string}</td>
                           <td className="td text-gray-500">{(e.department as Record<string, unknown>)?.name as string || '—'}</td>
-                          <td className="td text-green-600 font-semibold">{(e.billableHours as number).toFixed(1)}h</td>
-                          <td className="td text-gray-500">{(e.totalHours as number).toFixed(1)}h</td>
+                          <td className="td text-green-600 font-semibold">{(e.billableHours as number).toFixed(2)}h</td>
+                          <td className="td text-gray-500">{(e.totalHours as number).toFixed(2)}h</td>
                         </tr>
                       ))}
                     </tbody>
@@ -248,7 +248,7 @@ export default function DashboardPage() {
                     <div className="h-2 w-2 rounded-full bg-orange-500" />
                     <span className="text-sm text-gray-600">Hours Logged</span>
                   </div>
-                  <span className="font-semibold">{(dashboard?.totalHoursThisWeek || 0).toFixed(0)}h</span>
+                  <span className="font-semibold">{(dashboard?.totalHoursThisWeek || 0).toFixed(2)}h</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -282,7 +282,7 @@ export default function DashboardPage() {
                       legend: { position: 'right' },
                       tooltip: {
                         callbacks: {
-                          label: ctx => ` ${ctx.label}: ${(ctx.raw as number).toFixed(1)}h`,
+                          label: ctx => ` ${ctx.label}: ${(ctx.raw as number).toFixed(2)}h`,
                         },
                       },
                     },
@@ -312,7 +312,7 @@ export default function DashboardPage() {
                           {p.code ? <span className="ml-1 text-xs text-gray-400">({p.code as string})</span> : null}
                         </td>
                         <td className="td text-gray-500">{(p.clientName as string) || '—'}</td>
-                        <td className="td font-semibold text-green-600">{(p.billableHours as number).toFixed(1)}h</td>
+                        <td className="td font-semibold text-green-600">{(p.billableHours as number).toFixed(2)}h</td>
                       </tr>
                     ))}
                     {!billableByProject?.length && (
@@ -333,8 +333,8 @@ export default function DashboardPage() {
               icon={DocumentCheckIcon}
               color={dashboard?.currentTimesheetStatus === 'APPROVED' ? 'bg-green-500' : 'bg-orange-500'}
             />
-            <StatCard label="Hours This Week" value={`${(dashboard?.hoursThisWeek || 0).toFixed(1)}h`} icon={ClockIcon} color="bg-blue-500" />
-            <StatCard label="Billable This Week" value={`${(dashboard?.billableHoursThisWeek || 0).toFixed(1)}h`} icon={CurrencyDollarIcon} color="bg-green-500" />
+            <StatCard label="Hours This Week" value={`${(dashboard?.hoursThisWeek || 0).toFixed(2)}h`} icon={ClockIcon} color="bg-blue-500" />
+            <StatCard label="Billable This Week" value={`${(dashboard?.billableHoursThisWeek || 0).toFixed(2)}h`} icon={CurrencyDollarIcon} color="bg-green-500" />
           </div>
 
           <div className="card">
@@ -360,8 +360,8 @@ export default function DashboardPage() {
                       <td className="td">
                         {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
                       </td>
-                      <td className="td">{(ts.totalHours as number).toFixed(1)}h</td>
-                      <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(1)}h</td>
+                      <td className="td">{(ts.totalHours as number).toFixed(2)}h</td>
+                      <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(2)}h</td>
                       <td className="td">
                         <span className={STATUS_BADGE[ts.status as string] || 'badge-gray'}>{ts.status as string}</span>
                       </td>
