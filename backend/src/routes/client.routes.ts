@@ -167,7 +167,7 @@ router.post('/:id/teams', authorize(...MANAGER_ROLES), async (req: AuthRequest, 
     if (!team) throw new AppError('Team not found', 404);
 
     await Promise.all(
-      team.members.map(m =>
+      team.members.map((m: { userId: string }) =>
         prisma.clientMember.upsert({
           where: { clientId_userId: { clientId: req.params.id, userId: m.userId } },
           update: {},

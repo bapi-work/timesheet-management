@@ -23,7 +23,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
         where: { id: String(teamId), organizationId: orgId },
         include: { members: { select: { userId: true } } },
       });
-      if (team) teamMemberIds = team.members.map(m => m.userId);
+      if (team) teamMemberIds = team.members.map((m: { userId: string }) => m.userId);
     }
 
     // HR_ADMIN: see all pending approvals across org (their assigned + all SUBMITTED)
@@ -39,7 +39,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
         include: {
           timesheet: {
             include: {
-              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teams: { include: { team: { select: { id: true, name: true } } } } } },
+              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
               entries: true,
             },
           },
@@ -55,7 +55,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
         where: { leadId: userId },
         include: { members: { select: { userId: true } } },
       });
-      const allTeamMemberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+      const allTeamMemberIds = [...new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)))];
       const filteredMemberIds = teamMemberIds ?? allTeamMemberIds;
 
       const approvals = await prisma.timesheetApproval.findMany({
@@ -69,7 +69,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
         include: {
           timesheet: {
             include: {
-              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teams: { include: { team: { select: { id: true, name: true } } } } } },
+              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
               entries: true,
             },
           },
@@ -97,7 +97,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
       include: {
         timesheet: {
           include: {
-            user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teams: { include: { team: { select: { id: true, name: true } } } } } },
+            user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
             entries: true,
           },
         },
@@ -164,7 +164,7 @@ router.post('/:id/approve', async (req: AuthRequest, res: Response, next: NextFu
           where: { leadId: userId },
           include: { members: { select: { userId: true } } },
         });
-        const memberIds = new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)));
+        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
         if (!memberIds.has(approval.timesheet.userId)) {
           throw new AppError('Not authorized to approve this timesheet', 403);
         }
@@ -233,7 +233,7 @@ router.post('/:id/reject', async (req: AuthRequest, res: Response, next: NextFun
           where: { leadId: userId },
           include: { members: { select: { userId: true } } },
         });
-        const memberIds = new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)));
+        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
         if (!memberIds.has(approval.timesheet.userId)) throw new AppError('Not authorized', 403);
       }
     }
@@ -336,7 +336,7 @@ router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, n
     let teamFilterIds: string[] | undefined;
     if (teamId) {
       const team = await prisma.team.findFirst({ where: { id: String(teamId), organizationId: orgId }, include: { members: { select: { userId: true } } } });
-      if (team) teamFilterIds = team.members.map(m => m.userId);
+      if (team) teamFilterIds = team.members.map((m: { userId: string }) => m.userId);
     }
 
     let where: Record<string, unknown> = { status: 'SUBMITTED', timesheet: { user: { organizationId: orgId }, ...(teamFilterIds ? { userId: { in: teamFilterIds } } : {}) } };
@@ -344,7 +344,7 @@ router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, n
     if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
       if (role === 'TEAM_LEAD') {
         const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const allMemberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+        const allMemberIds = [...new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)))];
         const memberIds = teamFilterIds ? allMemberIds.filter(id => teamFilterIds!.includes(id)) : allMemberIds;
         where = { status: 'SUBMITTED', timesheet: { userId: { in: memberIds } } };
       } else {
@@ -398,7 +398,7 @@ router.get('/day-submissions/history', async (req: AuthRequest, res: Response, n
     if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
       if (role === 'TEAM_LEAD') {
         const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const memberIds = [...new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)))];
+        const memberIds = [...new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)))];
         where = { status: 'APPROVED', timesheet: { userId: { in: memberIds } } };
       } else {
         where = { status: 'APPROVED', timesheet: { user: { managerId: userId, organizationId: orgId } } };
@@ -449,7 +449,7 @@ router.post('/day-submissions/:id/approve', async (req: AuthRequest, res: Respon
     if (!isPrivileged) {
       if (role === 'TEAM_LEAD') {
         const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const memberIds = new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)));
+        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
         if (!memberIds.has(sub.timesheet.userId)) throw new AppError('Not authorized', 403);
       } else if (sub.timesheet.user.managerId !== userId) {
         throw new AppError('Not authorized', 403);
@@ -505,7 +505,7 @@ router.post('/day-submissions/:id/reject', async (req: AuthRequest, res: Respons
     if (!isPrivileged) {
       if (role === 'TEAM_LEAD') {
         const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const memberIds = new Set(ledTeams.flatMap(t => t.members.map(m => m.userId)));
+        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
         if (!memberIds.has(sub.timesheet.userId)) throw new AppError('Not authorized', 403);
       } else if (sub.timesheet.user.managerId !== userId) {
         throw new AppError('Not authorized', 403);

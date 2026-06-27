@@ -145,6 +145,7 @@ model Organization {
   projects    Project[]
   clients     Client[]
   invoices    Invoice[]
+  teams       Team[]
 }
 
 model Department {
@@ -170,21 +171,23 @@ model Department {
 }
 
 model Team {
-  id           String   @id @default(cuid())
-  name         String
-  description  String?
-  departmentId String?
-  projectId    String?
-  clientId     String?
-  leadId       String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  departmentId   String?
+  projectId      String?
+  clientId       String?
+  leadId         String?
+  organizationId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  department Department?  @relation(fields: [departmentId], references: [id])
-  project    Project?     @relation(fields: [projectId], references: [id])
-  client     Client?      @relation(fields: [clientId], references: [id])
-  lead       User?        @relation("TeamLead", fields: [leadId], references: [id])
-  members    TeamMember[]
+  department   Department?   @relation(fields: [departmentId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id])
+  client       Client?       @relation(fields: [clientId], references: [id])
+  lead         User?         @relation("TeamLead", fields: [leadId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  members      TeamMember[]
 }
 
 model TeamMember {
@@ -556,6 +559,7 @@ model LeaveRequest {
   startDate   DateTime
   endDate     DateTime
   days        Float
+  dayType     String      @default("FULL_DAY")
   reason      String?
   documentUrl String?
   status      LeaveStatus @default(PENDING)

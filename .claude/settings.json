@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i 's/\\\\.map\\(m => m\\\\.userId\\)/.map\\(\\(m: { userId: string }\\) => m.userId\\)/g' src/routes/approval.routes.ts)",
+      "Bash(sed -i 's/\\\\.flatMap\\(t => t\\\\.members\\\\.map\\(\\(m: { userId: string }\\) => m\\\\.userId\\)\\)/.flatMap\\(\\(t: { members: { userId: string }[] }\\) => t.members.map\\(\\(m: { userId: string }\\) => m.userId\\)\\)/g' src/routes/approval.routes.ts)",
+      "Bash(DATABASE_URL=\"postgresql://timesheet:timesheetpass@localhost:5432/timesheet_db\" npx prisma migrate dev --name add_daytype_and_team_org)",
+      "Bash(DATABASE_URL=\"postgresql://timesheet:timesheetpass@localhost:5432/timesheet_db\" npx prisma migrate dev --create-only --name add_daytype_and_team_org)"
+    ]
+  }
+}
