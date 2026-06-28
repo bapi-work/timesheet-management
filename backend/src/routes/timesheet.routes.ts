@@ -45,9 +45,11 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
       } else {
         where.user = { organizationId: req.user!.organizationId };
       }
-    } else if (isManager && userId) {
-      // Verify the requested user belongs to the same org to prevent cross-tenant access
-      where.userId = userId as string;
+    } else if (isManager) {
+      // Managers see all org timesheets; optionally filter by a specific userId
+      if (userId) {
+        where.userId = userId as string;
+      }
       where.user = { organizationId: req.user!.organizationId };
     } else {
       where.userId = req.user!.userId;
