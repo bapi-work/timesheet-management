@@ -221,6 +221,7 @@ model User {
   designation      String?
   joinDate         DateTime?
   exitDate         DateTime?
+  gender           String?
   isActive         Boolean   @default(true)
   mfaEnabled       Boolean   @default(false)
   mfaSecret        String?

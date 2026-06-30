@@ -50,9 +50,30 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
       where.userId = req.user!.userId;
     } else if (filterUserId) {
       where.userId = filterUserId;
+      where.user = { organizationId: req.user!.organizationId };
+    } else {
+      // Managers see org expenses but NOT other users' DRAFTs
+      where.user = { organizationId: req.user!.organizationId };
+      where.OR = [
+        { userId: req.user!.userId },          // own expenses (any status)
+        { status: { not: 'DRAFT' } },          // others' non-draft expenses
+      ];
     }
 
-    if (status) where.status = status;
+    if (status) {
+      // If an explicit status filter is chosen, apply it (overrides draft exclusion for managers)
+      if (isManager && filterUserId === undefined) {
+        // Re-apply but still restrict drafts to self
+        delete where.OR;
+        where.AND = [
+          { user: { organizationId: req.user!.organizationId } },
+          { status },
+          { OR: [{ userId: req.user!.userId }, { status: { not: 'DRAFT' } }] },
+        ];
+      } else {
+        where.status = status;
+      }
+    }
     if (category) where.category = category;
     if (projectId) where.projectId = projectId;
 

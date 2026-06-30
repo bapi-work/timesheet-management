@@ -48,7 +48,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
         id: true, email: true, passwordHash: true, role: true,
         organizationId: true, firstName: true, lastName: true,
         isActive: true, mfaEnabled: true, mfaSecret: true,
-        avatarUrl: true, employeeId: true, ipWhitelist: true,
+        avatarUrl: true, employeeId: true, ipWhitelist: true, gender: true,
       },
     });
 

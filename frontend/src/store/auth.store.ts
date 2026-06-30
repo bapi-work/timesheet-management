@@ -11,6 +11,7 @@ interface User {
   role: string;
   organizationId: string;
   avatarUrl?: string;
+  gender?: string;
   mfaEnabled?: boolean;
   department?: { id: string; name: string };
   organization?: { id: string; name: string; timezone: string };

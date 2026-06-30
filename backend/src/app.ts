@@ -5,6 +5,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
 
 import { errorHandler } from './middleware/error.middleware';
 import { requestLogger } from './middleware/audit.middleware';
@@ -47,6 +48,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan('combined'));
 app.use(requestLogger);
+
+// Serve uploaded files (receipts, leave docs, avatars) at /uploads/*
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,

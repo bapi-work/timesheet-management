@@ -31,7 +31,9 @@ const entrySchema = z.object({
 
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { userId, status, from, to, page = '1', limit = '20' } = req.query;
+    const { userId, status, from, to, startDate, endDate, page = '1', limit = '20' } = req.query;
+    const fromDate = (from || startDate) as string | undefined;
+    const toDate = (to || endDate) as string | undefined;
     const skip = (Number(page) - 1) * Number(limit);
 
     const isAdmin = ['SYSTEM_ADMIN', 'HR_ADMIN'].includes(req.user!.role);
@@ -55,10 +57,10 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
       where.userId = req.user!.userId;
     }
     if (status) where.status = status;
-    if (from || to) {
+    if (fromDate || toDate) {
       where.periodStart = {};
-      if (from) (where.periodStart as Record<string, unknown>).gte = new Date(from as string);
-      if (to) (where.periodStart as Record<string, unknown>).lte = new Date(to as string);
+      if (fromDate) (where.periodStart as Record<string, unknown>).gte = new Date(fromDate);
+      if (toDate) (where.periodStart as Record<string, unknown>).lte = new Date(toDate);
     }
 
     const [timesheets, total] = await Promise.all([
@@ -78,6 +80,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
             include: { approver: { select: { id: true, firstName: true, lastName: true } } },
             orderBy: { level: 'asc' },
           },
+          daySubmissions: { orderBy: { date: 'asc' } },
           user: { select: { id: true, firstName: true, lastName: true, employeeId: true } },
         },
       }),
@@ -94,8 +97,8 @@ router.get('/current', async (req: AuthRequest, res: Response, next: NextFunctio
   try {
     // Allow clients to request any specific week by passing ?week=YYYY-MM-DD
     const base = req.query.week ? new Date(req.query.week as string) : new Date();
-    const periodStart = startOfWeek(base, { weekStartsOn: 1 });
-    const periodEnd = endOfWeek(base, { weekStartsOn: 1 });
+    const periodStart = startOfWeek(base, { weekStartsOn: 0 });
+    const periodEnd = endOfWeek(base, { weekStartsOn: 0 });
 
     let timesheet = await prisma.timesheet.findUnique({
       where: { userId_periodStart_periodEnd: { userId: req.user!.userId, periodStart, periodEnd } },

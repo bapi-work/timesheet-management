@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { format, eachDayOfInterval, isWeekend, startOfWeek, endOfWeek, addWeeks, eachDayOfInterval as eachDay } from 'date-fns';
+import { format, eachDayOfInterval, isWeekend, startOfWeek, endOfWeek, addWeeks, eachDayOfInterval as eachDay, parseISO } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import {
@@ -121,7 +121,7 @@ export default function TimesheetPage() {
   const [weekOffset, setWeekOffset] = useState(0);
 
   const isCurrent = id === 'current' || !id;
-  const weekBase = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 1 });
+  const weekBase = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 0 });
   const url = isCurrent
     ? `/timesheets/current?week=${format(weekBase, 'yyyy-MM-dd')}`
     : `/timesheets/${id}`;
@@ -161,6 +161,12 @@ export default function TimesheetPage() {
     });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['timesheet', id, weekOffset] });
+
+  const submitTimesheet = useMutation({
+    mutationFn: () => api.post(`/timesheets/${timesheet?.id}/submit`),
+    onSuccess: () => { toast.success('Timesheet submitted for approval!'); invalidate(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
 
   const copyPrevMutation = useMutation({
     mutationFn: () => api.post(`/timesheets/${timesheet?.id}/copy-previous`),
@@ -220,7 +226,10 @@ export default function TimesheetPage() {
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="h-8 w-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
   if (!timesheet) return <div className="card text-center py-12 text-gray-500">Timesheet not found</div>;
 
-  const days = eachDayOfInterval({ start: new Date(timesheet.periodStart), end: new Date(timesheet.periodEnd) });
+  const days = eachDayOfInterval({
+    start: parseISO(timesheet.periodStart.slice(0, 10)),
+    end: parseISO(timesheet.periodEnd.slice(0, 10)),
+  });
   const timesheetLocked = ['APPROVED', 'LOCKED'].includes(timesheet.status);
 
   const daySubmissions: DaySubmission[] = timesheet.daySubmissions || [];
@@ -258,7 +267,7 @@ export default function TimesheetPage() {
                 <ChevronLeftIcon className="h-4 w-4" />
               </button>
               <span className="text-gray-500 text-sm">
-                {format(new Date(timesheet.periodStart), 'MMM d')} – {format(new Date(timesheet.periodEnd), 'MMM d, yyyy')}
+                {format(parseISO(timesheet.periodStart.slice(0, 10)), 'MMM d')} – {format(parseISO(timesheet.periodEnd.slice(0, 10)), 'MMM d, yyyy')}
                 {weekOffset === 0 && <span className="ml-1.5 text-xs text-primary-600 font-medium">(This week)</span>}
               </span>
               {/* Only allow navigating to past weeks — future weeks are disallowed (#23) */}
@@ -276,15 +285,27 @@ export default function TimesheetPage() {
             </div>
           ) : (
             <p className="text-gray-500 text-sm mt-1">
-              {format(new Date(timesheet.periodStart), 'MMM d')} – {format(new Date(timesheet.periodEnd), 'MMM d, yyyy')}
+              {format(parseISO(timesheet.periodStart.slice(0, 10)), 'MMM d')} – {format(parseISO(timesheet.periodEnd.slice(0, 10)), 'MMM d, yyyy')}
             </p>
           )}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <span className={statusConfig.cls}>{statusConfig.label}</span>
+          {!timesheetLocked && timesheet.status === 'DRAFT' && (timesheet.totalHours || 0) > 0 && (
+            <button
+              onClick={async () => {
+                const ok = await confirm('Submit this entire timesheet for approval?', { confirmLabel: 'Submit' });
+                if (ok) submitTimesheet.mutate();
+              }}
+              disabled={submitTimesheet.isPending}
+              className="btn-primary"
+            >
+              <PaperAirplaneIcon className="h-4 w-4" /> Submit Timesheet
+            </button>
+          )}
           {!timesheetLocked && hasDraftDaysToSubmit && (
-            <button onClick={submitAllDraftDays} className="btn-primary">
-              <PaperAirplaneIcon className="h-4 w-4" /> Submit Week
+            <button onClick={submitAllDraftDays} className="btn-secondary">
+              <PaperAirplaneIcon className="h-4 w-4" /> Submit Days
             </button>
           )}
           {!timesheetLocked && (
@@ -461,7 +482,7 @@ export default function TimesheetPage() {
                           </div>
                         </div>
                         {dayEditable && (
-                          <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <div className="flex flex-col gap-1">
                             <button
                               onClick={() => { setEditingEntryId(entry.id as string); setAddingDay(null); }}
                               className="p-1.5 rounded text-gray-400 hover:bg-blue-50 hover:text-blue-600"

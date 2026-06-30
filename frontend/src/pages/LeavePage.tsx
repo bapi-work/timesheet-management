@@ -13,7 +13,14 @@ const LEAVE_COLORS: Record<string, string> = {
   PATERNITY: 'badge-purple', UNPAID: 'badge-gray', COMPENSATORY: 'badge-green', OTHER: 'badge-yellow',
 };
 
-const LEAVE_TYPES = ['ANNUAL', 'SICK', 'MATERNITY', 'PATERNITY', 'UNPAID', 'COMPENSATORY', 'OTHER'];
+const ALL_LEAVE_TYPES = ['ANNUAL', 'SICK', 'MATERNITY', 'PATERNITY', 'UNPAID', 'COMPENSATORY', 'OTHER'];
+
+// Filter leave types based on employee gender — MATERNITY for females only, PATERNITY for males only
+function getLeaveTypesForUser(gender?: string) {
+  if (gender === 'MALE') return ALL_LEAVE_TYPES.filter(t => t !== 'MATERNITY');
+  if (gender === 'FEMALE') return ALL_LEAVE_TYPES.filter(t => t !== 'PATERNITY');
+  return ALL_LEAVE_TYPES;
+}
 
 type Tab = 'my' | 'team' | 'admin';
 
@@ -38,6 +45,7 @@ export default function LeavePage() {
 
   const isHrAdmin = hasRole(user?.role, ADMIN_ROLES);
   const canSeeTeamLeave = isHrAdmin || user?.role === 'DEPARTMENT_MANAGER' || user?.role === 'PROJECT_MANAGER' || user?.role === 'TEAM_LEAD';
+  const LEAVE_TYPES = getLeaveTypesForUser(user?.gender);
 
   const defaultTab: Tab = isHrAdmin ? 'admin' : canSeeTeamLeave ? 'team' : 'my';
   const [tab, setTab] = useState<Tab>(defaultTab);
@@ -523,7 +531,7 @@ export default function LeavePage() {
               <div>
                 <label className="label">Leave Type *</label>
                 <select name="leaveType" required className="input">
-                  {LEAVE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                  {ALL_LEAVE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">

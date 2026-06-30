@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { ClockIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
@@ -10,8 +10,25 @@ import toast from 'react-hot-toast';
 
 const STATUS_BADGE: Record<string, string> = {
   DRAFT: 'badge-gray', SUBMITTED: 'badge-blue', APPROVED: 'badge-green',
-  REJECTED: 'badge-red', LOCKED: 'badge-purple',
+  REJECTED: 'badge-red', LOCKED: 'badge-purple', IN_REVIEW: 'badge-blue',
 };
+
+function deriveDisplayStatus(timesheetStatus: string, daySubmissions: { status: string }[]): string {
+  if (['LOCKED', 'APPROVED', 'SUBMITTED', 'REJECTED'].includes(timesheetStatus)) return timesheetStatus;
+  if (!daySubmissions.length) return timesheetStatus;
+  const hasSubmitted = daySubmissions.some(d => d.status === 'SUBMITTED');
+  const hasRejected  = daySubmissions.some(d => d.status === 'REJECTED');
+  const allApproved  = daySubmissions.length > 0 && daySubmissions.every(d => d.status === 'APPROVED');
+  if (allApproved)  return 'APPROVED';
+  if (hasRejected)  return 'REJECTED';
+  if (hasSubmitted) return 'IN_REVIEW';
+  return timesheetStatus;
+}
+
+// Parse server ISO date strings safely without timezone offset shifting
+function formatDateStr(iso: string, fmt: string) {
+  return format(parseISO(iso.slice(0, 10)), fmt);
+}
 
 const VALID_STATUSES = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
 
@@ -248,6 +265,8 @@ export default function TimesheetListPage() {
               </tr>
             ) : (data?.timesheets || []).map((ts: Record<string, unknown>) => {
               const u = ts.user as Record<string, unknown> | undefined;
+              const daySubs = (ts.daySubmissions as { status: string }[]) || [];
+              const displayStatus = deriveDisplayStatus(ts.status as string, daySubs);
               return (
                 <tr key={ts.id as string} className="tr-hover">
                   {isManager && (
@@ -257,15 +276,17 @@ export default function TimesheetListPage() {
                     </td>
                   )}
                   <td className="td font-medium">
-                    {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
+                    {formatDateStr(ts.periodStart as string, 'MMM d')} – {formatDateStr(ts.periodEnd as string, 'MMM d, yyyy')}
                   </td>
                   <td className="td">{((ts.totalHours as number) || 0).toFixed(2)}h</td>
                   <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(2)}h</td>
                   <td className="td">
-                    <span className={STATUS_BADGE[ts.status as string] || 'badge-gray'}>{ts.status as string}</span>
+                    <span className={STATUS_BADGE[displayStatus] || 'badge-gray'}>
+                      {displayStatus === 'IN_REVIEW' ? 'In Review' : displayStatus}
+                    </span>
                   </td>
                   <td className="td text-gray-400 text-xs">
-                    {ts.submittedAt ? format(new Date(ts.submittedAt as string), 'MMM d, yyyy') : '—'}
+                    {ts.submittedAt ? formatDateStr(ts.submittedAt as string, 'MMM d, yyyy') : '—'}
                   </td>
                   <td className="td">
                     <div className="flex items-center gap-2">

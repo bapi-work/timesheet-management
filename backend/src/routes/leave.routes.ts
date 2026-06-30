@@ -19,6 +19,43 @@ const documentUpload = multer({
 const router = Router();
 router.use(authenticate);
 
+// GET /leave — used by CalendarPage and TimesheetPage to fetch leave requests for a date range
+router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { status, startDate, endDate } = req.query;
+    const isManagerRole = (MANAGER_ROLES as string[]).includes(req.user!.role);
+
+    const where: Record<string, unknown> = {};
+    if (!isManagerRole) {
+      where.userId = req.user!.userId;
+    } else {
+      where.user = { organizationId: req.user!.organizationId };
+    }
+    if (status) where.status = status;
+    // Date overlap filter: leave overlaps [startDate, endDate] if startDate <= endDate AND endDate >= startDate
+    if (startDate && endDate) {
+      where.startDate = { lte: new Date(endDate as string) };
+      where.endDate = { gte: new Date(startDate as string) };
+    } else if (startDate) {
+      where.endDate = { gte: new Date(startDate as string) };
+    } else if (endDate) {
+      where.startDate = { lte: new Date(endDate as string) };
+    }
+
+    const requests = await prisma.leaveRequest.findMany({
+      where,
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, employeeId: true } },
+        approver: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ requests });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/balance', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const year = new Date().getFullYear();
