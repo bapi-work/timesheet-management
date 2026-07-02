@@ -349,6 +349,7 @@ export default function ApprovalsPage() {
                               <th className="text-left px-4 py-2">Date</th>
                               <th className="text-left px-4 py-2">Project</th>
                               <th className="text-left px-4 py-2">Task</th>
+                              <th className="text-left px-4 py-2">Category</th>
                               <th className="text-left px-4 py-2">Description</th>
                               <th className="text-right px-4 py-2">Hours</th>
                               <th className="text-left px-4 py-2">Billable</th>
@@ -360,6 +361,7 @@ export default function ApprovalsPage() {
                                 <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{format(new Date(e.date as string), 'EEE MMM d')}</td>
                                 <td className="px-4 py-2 font-medium">{(e.project as { name: string })?.name || '—'}</td>
                                 <td className="px-4 py-2 text-gray-500">{(e.task as { name: string })?.name || '—'}</td>
+                                <td className="px-4 py-2 text-gray-500">{(e.category as string) || '—'}</td>
                                 <td className="px-4 py-2 text-gray-500 max-w-xs break-words">{(e.description as string) || '—'}</td>
                                 <td className="px-4 py-2 text-right font-semibold">{(e.hours as number).toFixed(2)}h</td>
                                 <td className="px-4 py-2">
@@ -449,6 +451,7 @@ export default function ApprovalsPage() {
                             <tr className="border-b border-gray-200 text-xs text-gray-500 uppercase">
                               <th className="text-left px-4 py-2">Project</th>
                               <th className="text-left px-4 py-2">Task</th>
+                              <th className="text-left px-4 py-2">Category</th>
                               <th className="text-left px-4 py-2">Description</th>
                               <th className="text-right px-4 py-2">Hours</th>
                               <th className="text-left px-4 py-2">Billable</th>
@@ -459,6 +462,7 @@ export default function ApprovalsPage() {
                               <tr key={e.id as string} className="border-b border-gray-100 last:border-0">
                                 <td className="px-4 py-2 font-medium">{(e.project as { name: string })?.name || '—'}</td>
                                 <td className="px-4 py-2 text-gray-500">{(e.task as { name: string })?.name || '—'}</td>
+                                <td className="px-4 py-2 text-gray-500">{(e.category as string) || '—'}</td>
                                 <td className="px-4 py-2 text-gray-500 max-w-xs break-words">{(e.description as string) || '—'}</td>
                                 <td className="px-4 py-2 text-right font-semibold">{(e.hours as number).toFixed(2)}h</td>
                                 <td className="px-4 py-2">
