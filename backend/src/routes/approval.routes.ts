@@ -40,7 +40,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
           timesheet: {
             include: {
               user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
-              entries: true,
+              entries: { include: { project: { select: { id: true, name: true } }, task: { select: { id: true, name: true } } } },
             },
           },
         },
@@ -70,7 +70,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
           timesheet: {
             include: {
               user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
-              entries: true,
+              entries: { include: { project: { select: { id: true, name: true } }, task: { select: { id: true, name: true } } } },
             },
           },
         },
@@ -98,7 +98,7 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
         timesheet: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
-            entries: true,
+            entries: { include: { project: { select: { id: true, name: true } }, task: { select: { id: true, name: true } } } },
           },
         },
       },
