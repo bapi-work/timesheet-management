@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -9,9 +9,10 @@ import {
   PlusIcon, TrashIcon, PaperAirplaneIcon,
   ClipboardDocumentListIcon, LockClosedIcon,
   ChevronLeftIcon, ChevronRightIcon, ArrowUturnLeftIcon,
-  PencilIcon, CheckIcon, XMarkIcon,
+  PencilIcon, CheckIcon, XMarkIcon, ChevronDownIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
+import GridTimesheetView from '../components/GridTimesheetView';
 
 const ENTRY_CATEGORIES = [
   'Deliverables',
@@ -119,6 +120,19 @@ export default function TimesheetPage() {
   const [addingDay, setAddingDay] = useState<string | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [logMode, setLogMode] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [showModeDropdown, setShowModeDropdown] = useState(false);
+  const modeDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (modeDropdownRef.current && !modeDropdownRef.current.contains(e.target as Node)) {
+        setShowModeDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const isCurrent = id === 'current' || !id;
   const weekBase = startOfWeek(addWeeks(new Date(), weekOffset), { weekStartsOn: 0 });
@@ -290,6 +304,30 @@ export default function TimesheetPage() {
           )}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Log mode switcher */}
+          <div className="relative" ref={modeDropdownRef}>
+            <button
+              onClick={() => setShowModeDropdown(v => !v)}
+              className="btn-secondary flex items-center gap-1.5"
+            >
+              {logMode === 'daily' ? 'Daily Log' : logMode === 'weekly' ? 'Weekly Log' : 'Monthly Log'}
+              <ChevronDownIcon className="h-4 w-4" />
+            </button>
+            {showModeDropdown && (
+              <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-xl shadow-lg z-20 py-1">
+                {(['daily', 'weekly', 'monthly'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => { setLogMode(m); setShowModeDropdown(false); }}
+                    className={clsx('w-full text-left px-4 py-2 text-sm hover:bg-gray-50', logMode === m && 'text-blue-600 font-medium')}
+                  >
+                    {m === 'daily' ? 'Daily Log' : m === 'weekly' ? 'Weekly Log' : 'Monthly Log'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <span className={statusConfig.cls}>{statusConfig.label}</span>
           {!timesheetLocked && timesheet.status === 'DRAFT' && (timesheet.totalHours || 0) > 0 && (
             <button
@@ -352,8 +390,19 @@ export default function TimesheetPage() {
         </div>
       )}
 
+      {/* Grid view (weekly / monthly) */}
+      {(logMode === 'weekly' || logMode === 'monthly') && (
+        <div className="card">
+          <GridTimesheetView
+            mode={logMode}
+            projects={projects || []}
+            weekBase={weekBase}
+          />
+        </div>
+      )}
+
       {/* Daily Entries */}
-      <div className="card p-0 overflow-hidden">
+      {logMode === 'daily' && (<div className="card p-0 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h3 className="font-semibold text-gray-900">Time Entries</h3>
           <span className="text-sm text-gray-500">{timesheet.entries?.length || 0} entries</span>
@@ -526,7 +575,7 @@ export default function TimesheetPage() {
             );
           })}
         </div>
-      </div>
+      </div>)}
 
       {/* Help text */}
       <div className="text-xs text-gray-400 space-y-0.5">
