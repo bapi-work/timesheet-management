@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Auto-bump patch version on every push
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+FRONTEND_PKG="$REPO_ROOT/frontend/package.json"
+BACKEND_PKG="$REPO_ROOT/backend/package.json"
+
+# Read current version from frontend/package.json
+CURRENT=$(grep '"version"' "$FRONTEND_PKG" | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+
+# Split into major.minor.patch
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+PATCH=$((PATCH + 1))
+NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+
+echo "[pre-push] Bumping version $CURRENT → $NEW_VERSION"
+
+# Update frontend/package.json
+sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$FRONTEND_PKG"
+
+# Update backend/package.json
+sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$BACKEND_PKG"
+
+# Stage and commit the version bump
+git add "$FRONTEND_PKG" "$BACKEND_PKG"
+git commit -m "chore: bump version to $NEW_VERSION" --no-verify
+
+echo "[pre-push] Version committed as $NEW_VERSION"
