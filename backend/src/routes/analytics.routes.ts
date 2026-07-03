@@ -112,27 +112,22 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
 
 router.get('/trends', authorize(...ANALYTICS_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { months = '12' } = req.query;
+    const { months = '12', departmentId } = req.query;
     const result = [];
     const now = new Date();
+    const userFilter: Record<string, unknown> = { organizationId: req.user!.organizationId };
+    if (departmentId) userFilter.departmentId = departmentId as string;
 
     for (let i = Number(months) - 1; i >= 0; i--) {
       const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
       const [totalAgg, billableAgg] = await Promise.all([
         prisma.timesheetEntry.aggregate({
-          where: {
-            date: { gte: start, lte: end },
-            timesheet: { user: { organizationId: req.user!.organizationId } },
-          },
+          where: { date: { gte: start, lte: end }, timesheet: { user: userFilter } },
           _sum: { hours: true },
         }),
         prisma.timesheetEntry.aggregate({
-          where: {
-            date: { gte: start, lte: end },
-            isBillable: true,
-            timesheet: { user: { organizationId: req.user!.organizationId } },
-          },
+          where: { date: { gte: start, lte: end }, isBillable: true, timesheet: { user: userFilter } },
           _sum: { hours: true },
         }),
       ]);
@@ -151,13 +146,16 @@ router.get('/trends', authorize(...ANALYTICS_ROLES), async (req: AuthRequest, re
 
 router.get('/billable-by-employee', authorize(...ANALYTICS_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { from, to, limit = '15' } = req.query;
+    const { from, to, limit = '15', departmentId } = req.query;
     const dateFilter: Record<string, unknown> = {};
     if (from) dateFilter.gte = new Date(from as string);
     if (to) dateFilter.lte = new Date(to as string);
 
+    const userWhere: Record<string, unknown> = { organizationId: req.user!.organizationId, isActive: true, role: { not: 'SYSTEM_ADMIN' } };
+    if (departmentId) userWhere.departmentId = departmentId as string;
+
     const users = await prisma.user.findMany({
-      where: { organizationId: req.user!.organizationId, isActive: true, role: { not: 'SYSTEM_ADMIN' } },
+      where: userWhere,
       select: { id: true, firstName: true, lastName: true, employeeId: true, department: { select: { name: true } } },
     });
 
