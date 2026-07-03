@@ -56,7 +56,12 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     } else {
       where.userId = req.user!.userId;
     }
-    if (status) where.status = status;
+    if (status) {
+      where.status = status;
+    } else if (isAdmin || isManager) {
+      // Admins/managers don't need to see employee drafts by default
+      where.status = { not: 'DRAFT' };
+    }
     if (fromDate || toDate) {
       where.periodStart = {};
       if (fromDate) (where.periodStart as Record<string, unknown>).gte = new Date(fromDate);

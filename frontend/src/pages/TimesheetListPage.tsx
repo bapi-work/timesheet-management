@@ -33,6 +33,7 @@ function formatDateStr(iso: string, fmt: string) {
 }
 
 const VALID_STATUSES = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
+const MANAGER_STATUSES = ['', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
 
 type UploadResult = {
   success: boolean;
@@ -211,7 +212,7 @@ export default function TimesheetListPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 items-center">
-        {VALID_STATUSES.map(s => (
+        {(isManager ? MANAGER_STATUSES : VALID_STATUSES).map(s => (
           <button
             key={s}
             onClick={() => { setStatus(s); setPage(1); }}
@@ -219,7 +220,7 @@ export default function TimesheetListPage() {
               status === s ? 'bg-primary-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            {s || 'All'}
+            {s ? s : isManager ? 'All (excl. Drafts)' : 'All'}
           </button>
         ))}
 
