@@ -11,17 +11,19 @@ import toast from 'react-hot-toast';
 const STATUS_BADGE: Record<string, string> = {
   DRAFT: 'badge-gray', SUBMITTED: 'badge-blue', APPROVED: 'badge-green',
   REJECTED: 'badge-red', LOCKED: 'badge-purple', IN_REVIEW: 'badge-blue',
+  NEEDS_SUBMISSION: 'badge-yellow',
 };
 
-function deriveDisplayStatus(timesheetStatus: string, daySubmissions: { status: string }[]): string {
+function deriveDisplayStatus(timesheetStatus: string, daySubmissions: { status: string }[], totalHours: number): string {
   if (['LOCKED', 'APPROVED', 'SUBMITTED', 'REJECTED'].includes(timesheetStatus)) return timesheetStatus;
-  if (!daySubmissions.length) return timesheetStatus;
   const hasSubmitted = daySubmissions.some(d => d.status === 'SUBMITTED');
   const hasRejected  = daySubmissions.some(d => d.status === 'REJECTED');
   const allApproved  = daySubmissions.length > 0 && daySubmissions.every(d => d.status === 'APPROVED');
   if (allApproved)  return 'APPROVED';
   if (hasRejected)  return 'REJECTED';
   if (hasSubmitted) return 'IN_REVIEW';
+  // DRAFT with logged hours but no submission — needs action
+  if (timesheetStatus === 'DRAFT' && totalHours > 0) return 'NEEDS_SUBMISSION';
   return timesheetStatus;
 }
 
@@ -266,7 +268,7 @@ export default function TimesheetListPage() {
             ) : (data?.timesheets || []).map((ts: Record<string, unknown>) => {
               const u = ts.user as Record<string, unknown> | undefined;
               const daySubs = (ts.daySubmissions as { status: string }[]) || [];
-              const displayStatus = deriveDisplayStatus(ts.status as string, daySubs);
+              const displayStatus = deriveDisplayStatus(ts.status as string, daySubs, (ts.totalHours as number) || 0);
               return (
                 <tr key={ts.id as string} className="tr-hover">
                   {isManager && (
@@ -282,7 +284,7 @@ export default function TimesheetListPage() {
                   <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(2)}h</td>
                   <td className="td">
                     <span className={STATUS_BADGE[displayStatus] || 'badge-gray'}>
-                      {displayStatus === 'IN_REVIEW' ? 'In Review' : displayStatus}
+                      {displayStatus === 'IN_REVIEW' ? 'In Review' : displayStatus === 'NEEDS_SUBMISSION' ? 'Needs Submission' : displayStatus}
                     </span>
                   </td>
                   <td className="td text-gray-400 text-xs">
