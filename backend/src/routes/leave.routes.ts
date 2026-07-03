@@ -1,18 +1,28 @@
 import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 import { notificationQueue } from '../services/queue.service';
 
+const LEAVE_DOC_DIR = 'uploads/leave-docs/';
+fs.mkdirSync(LEAVE_DOC_DIR, { recursive: true });
+
+const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.doc', '.docx'];
+
 const documentUpload = multer({
-  dest: 'uploads/leave-docs/',
+  dest: LEAVE_DOC_DIR,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.doc', '.docx'];
-    cb(null, allowed.includes(path.extname(file.originalname).toLowerCase()));
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_EXTENSIONS.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new AppError(`File type not supported. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`, 400));
+    }
   },
 });
 
@@ -68,15 +78,17 @@ router.get('/balance', async (req: AuthRequest, res: Response, next: NextFunctio
   }
 });
 
-// POST /api/leave/upload-doc — upload supporting document (#20)
-router.post('/upload-doc', documentUpload.single('file'), (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    if (!req.file) throw new AppError('No file uploaded', 400);
+// POST /api/leave/upload-doc — upload supporting document
+router.post('/upload-doc', (req: AuthRequest, res: Response, next: NextFunction) => {
+  documentUpload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') return next(new AppError('File too large. Maximum size is 10MB.', 400));
+      return next(err);
+    }
+    if (!req.file) return next(new AppError('No file received. Please select a file to upload.', 400));
     const url = `/uploads/leave-docs/${req.file.filename}`;
     res.json({ url, filename: req.file.originalname });
-  } catch (err) {
-    next(err);
-  }
+  });
 });
 
 router.get('/requests', async (req: AuthRequest, res: Response, next: NextFunction) => {

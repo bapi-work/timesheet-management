@@ -97,8 +97,9 @@ export default function LeavePage() {
         fd.append('file', docFile);
         const res = await api.post('/leave/upload-doc', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
         documentUrl = res.data.url;
-      } catch {
-        toast.error('Failed to upload document');
+      } catch (e) {
+        const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to upload document';
+        toast.error(msg);
         setDocUploading(false);
         return;
       }
