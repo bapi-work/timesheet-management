@@ -469,7 +469,7 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
             )}
             <button
               onClick={() => { if (weeklyTimesheetId) submitWeekMutation.mutate(weeklyTimesheetId); else toast.error('No entries to submit — add time first'); }}
-              disabled={submitWeekMutation.isPending || totalHours === 0 || (weeklyStatus && weeklyStatus !== 'DRAFT' && weeklyStatus !== 'REJECTED')}
+              disabled={submitWeekMutation.isPending || totalHours === 0 || (!!weeklyStatus && weeklyStatus !== 'DRAFT' && weeklyStatus !== 'REJECTED')}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <PaperAirplaneIcon className="h-4 w-4" />
