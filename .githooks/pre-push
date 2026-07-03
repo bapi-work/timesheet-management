@@ -1,30 +1,45 @@
 #!/usr/bin/env bash
-# Auto-bump patch version on every push
+# Auto-bump patch version on every push.
+# Creates a version-bump commit and re-pushes to include it.
+
+# Prevent infinite recursion from the sub-push below
+if [ "$_VERSION_BUMPING" = "1" ]; then
+  exit 0
+fi
 
 set -e
 
+REMOTE="$1"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 FRONTEND_PKG="$REPO_ROOT/frontend/package.json"
 BACKEND_PKG="$REPO_ROOT/backend/package.json"
 
+# Current branch
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+
 # Read current version from frontend/package.json
 CURRENT=$(grep '"version"' "$FRONTEND_PKG" | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
 
-# Split into major.minor.patch
+# Split into major.minor.patch and increment patch
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 PATCH=$((PATCH + 1))
 NEW_VERSION="$MAJOR.$MINOR.$PATCH"
 
 echo "[pre-push] Bumping version $CURRENT → $NEW_VERSION"
 
-# Update frontend/package.json
+# Update both package.json files
 sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$FRONTEND_PKG"
-
-# Update backend/package.json
 sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" "$BACKEND_PKG"
 
-# Stage and commit the version bump
+# Commit the bump (--no-verify skips hooks on this internal commit)
 git add "$FRONTEND_PKG" "$BACKEND_PKG"
-git commit -m "chore: bump version to $NEW_VERSION" --no-verify
+git commit --no-verify -m "chore: bump version to $NEW_VERSION"
 
-echo "[pre-push] Version committed as $NEW_VERSION"
+echo "[pre-push] Pushing version bump commit..."
+# Push the updated HEAD (including the bump commit) without re-triggering this hook
+export _VERSION_BUMPING=1
+git push "$REMOTE" "$BRANCH" --no-verify
+
+echo "[pre-push] Version $NEW_VERSION pushed."
+# Exit 1 to cancel the original push (we already pushed above)
+exit 1
