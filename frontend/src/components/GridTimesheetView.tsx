@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   format, eachDayOfInterval, startOfWeek, endOfWeek,
   startOfMonth, endOfMonth, addMonths, parseISO, isWeekend,
 } from 'date-fns';
-import { PlusIcon, TrashIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon, ChevronLeftIcon, ChevronRightIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
@@ -231,6 +231,29 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
 
   const addRow = () => setRows(prev => [...prev, emptyRow()]);
 
+  // Derive the single weekly timesheet (only used in weekly mode)
+  const weeklyTimesheetId = mode === 'weekly'
+    ? timesheetMapRef.current.get(format(rangeStart, 'yyyy-MM-dd'))?.id
+    : undefined;
+  const weeklyStatus = mode === 'weekly'
+    ? timesheetMapRef.current.get(format(rangeStart, 'yyyy-MM-dd'))?.status
+    : undefined;
+
+  const submitWeekMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/timesheets/${id}/submit`),
+    onSuccess: () => {
+      toast.success('Week submitted for approval');
+      qc.invalidateQueries({ queryKey: ['grid-timesheets'] });
+      qc.invalidateQueries({ queryKey: ['timesheet'] });
+      qc.invalidateQueries({ queryKey: ['timesheets'] });
+      // update local ref status
+      const ts = timesheetMapRef.current.get(format(rangeStart, 'yyyy-MM-dd'));
+      if (ts) timesheetMapRef.current.set(format(rangeStart, 'yyyy-MM-dd'), { ...ts, status: 'SUBMITTED' });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast.error(e.response?.data?.message || 'Failed to submit'),
+  });
+
   const updateRowMeta = (key: string, field: keyof GridRow, value: unknown) => {
     setRows(prev => prev.map(r => r.key === key ? { ...r, [field]: value } : r));
   };
@@ -425,10 +448,36 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
         </table>
       </div>
 
-      {/* Add row */}
-      <button onClick={addRow} className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium px-1">
-        <PlusIcon className="h-4 w-4" /> Add Row
-      </button>
+      {/* Footer actions */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <button onClick={addRow} className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium px-1">
+          <PlusIcon className="h-4 w-4" /> Add Row
+        </button>
+
+        {mode === 'weekly' && (
+          <div className="flex items-center gap-3">
+            {weeklyStatus && weeklyStatus !== 'DRAFT' && (
+              <span className={clsx(
+                'text-xs font-medium px-2.5 py-1 rounded-full',
+                weeklyStatus === 'SUBMITTED' && 'bg-blue-100 text-blue-700',
+                weeklyStatus === 'APPROVED' && 'bg-green-100 text-green-700',
+                weeklyStatus === 'REJECTED' && 'bg-red-100 text-red-700',
+                weeklyStatus === 'IN_REVIEW' && 'bg-blue-100 text-blue-700',
+              )}>
+                {weeklyStatus === 'IN_REVIEW' ? 'In Review' : weeklyStatus}
+              </span>
+            )}
+            <button
+              onClick={() => { if (weeklyTimesheetId) submitWeekMutation.mutate(weeklyTimesheetId); else toast.error('No entries to submit — add time first'); }}
+              disabled={submitWeekMutation.isPending || totalHours === 0 || (weeklyStatus && weeklyStatus !== 'DRAFT' && weeklyStatus !== 'REJECTED')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <PaperAirplaneIcon className="h-4 w-4" />
+              {submitWeekMutation.isPending ? 'Submitting…' : weeklyStatus === 'REJECTED' ? 'Resubmit Week' : 'Submit Week'}
+            </button>
+          </div>
+        )}
+      </div>
 
       <p className="text-xs text-gray-400">Enter time as HH:MM (e.g. 08:00) or decimal (e.g. 8). Changes save automatically on exit.</p>
     </div>
