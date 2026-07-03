@@ -231,27 +231,27 @@ export default function BackupPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.ftpHost')} *</label>
                   <input type="text" value={ftpForm.host} onChange={e => setFtpForm(f => ({ ...f, host: e.target.value }))}
-                    className="input-field w-full" placeholder="ftp.example.com" />
+                    className="input" placeholder="ftp.example.com" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.ftpPort')}</label>
                   <input type="number" value={ftpForm.port} onChange={e => setFtpForm(f => ({ ...f, port: e.target.value }))}
-                    className="input-field w-full" />
+                    className="input" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.ftpUser')} *</label>
                   <input type="text" value={ftpForm.user} onChange={e => setFtpForm(f => ({ ...f, user: e.target.value }))}
-                    className="input-field w-full" />
+                    className="input" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.ftpPassword')} *</label>
                   <input type="password" value={ftpForm.password} onChange={e => setFtpForm(f => ({ ...f, password: e.target.value }))}
-                    className="input-field w-full" />
+                    className="input" />
                 </div>
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.remotePath')}</label>
                   <input type="text" value={ftpForm.remotePath} onChange={e => setFtpForm(f => ({ ...f, remotePath: e.target.value }))}
-                    className="input-field w-full" placeholder="/backups" />
+                    className="input" placeholder="/backups" />
                 </div>
               </div>
               <button
@@ -276,28 +276,28 @@ export default function BackupPage() {
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3Endpoint')} *</label>
                   <input type="url" value={cloudForm.endpoint} onChange={e => setCloudForm(f => ({ ...f, endpoint: e.target.value }))}
-                    className="input-field w-full" placeholder="https://nyc3.digitaloceanspaces.com" />
+                    className="input" placeholder="https://nyc3.digitaloceanspaces.com" />
                   <p className="text-xs text-gray-400 mt-1">DO Spaces: https://nyc3.digitaloceanspaces.com · AWS S3: https://s3.amazonaws.com · R2: https://&lt;account&gt;.r2.cloudflarestorage.com</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3Bucket')} *</label>
                   <input type="text" value={cloudForm.bucket} onChange={e => setCloudForm(f => ({ ...f, bucket: e.target.value }))}
-                    className="input-field w-full" placeholder="my-backups" />
+                    className="input" placeholder="my-backups" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3Region')}</label>
                   <input type="text" value={cloudForm.region} onChange={e => setCloudForm(f => ({ ...f, region: e.target.value }))}
-                    className="input-field w-full" placeholder="us-east-1" />
+                    className="input" placeholder="us-east-1" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3AccessKey')} *</label>
                   <input type="text" value={cloudForm.accessKey} onChange={e => setCloudForm(f => ({ ...f, accessKey: e.target.value }))}
-                    className="input-field w-full" />
+                    className="input" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3SecretKey')} *</label>
                   <input type="password" value={cloudForm.secretKey} onChange={e => setCloudForm(f => ({ ...f, secretKey: e.target.value }))}
-                    className="input-field w-full" />
+                    className="input" />
                 </div>
               </div>
               <button

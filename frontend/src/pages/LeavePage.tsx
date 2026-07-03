@@ -4,9 +4,36 @@ import { useForm } from 'react-hook-form';
 import { format } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, ArrowDownTrayIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
+
+function exportLeaveCSV(requests: Record<string, unknown>[], filename: string) {
+  const rows = [
+    ['Employee', 'Leave Type', 'Start Date', 'End Date', 'Days', 'Day Type', 'Status', 'Reason', 'Approver', 'Comments'],
+    ...requests.map(r => {
+      const u = r.user as { firstName: string; lastName: string } | undefined;
+      const approver = r.approver as { firstName: string; lastName: string } | undefined;
+      return [
+        u ? `${u.firstName} ${u.lastName}` : '',
+        r.leaveType as string,
+        format(new Date(r.startDate as string), 'yyyy-MM-dd'),
+        format(new Date(r.endDate as string), 'yyyy-MM-dd'),
+        String(r.days),
+        r.dayType as string,
+        r.status as string,
+        (r.reason as string) || '',
+        approver ? `${approver.firstName} ${approver.lastName}` : '',
+        (r.approverComments as string) || '',
+      ];
+    }),
+  ];
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
 
 const LEAVE_COLORS: Record<string, string> = {
   ANNUAL: 'badge-blue', SICK: 'badge-red', MATERNITY: 'badge-purple',
@@ -35,6 +62,11 @@ export default function LeavePage() {
   const [rejectComment, setRejectComment] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showBulkEntitlementModal, setShowBulkEntitlementModal] = useState(false);
+  const [showAddBalanceModal, setShowAddBalanceModal] = useState(false);
+  const [adminDeptFilter, setAdminDeptFilter] = useState('');
+  const [adminDateFrom, setAdminDateFrom] = useState('');
+  const [adminDateTo, setAdminDateTo] = useState('');
+  const { register: registerAddBalance, handleSubmit: handleSubmitAddBalance, reset: resetAddBalance } = useForm();
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
   const docInputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +106,24 @@ export default function LeavePage() {
     queryKey: ['leave', 'all-balances'],
     queryFn: () => api.get('/leave/balances/all').then(r => r.data),
     enabled: isHrAdmin,
+  });
+
+  const { data: departments = [] } = useQuery({
+    queryKey: ['departments-list'],
+    queryFn: () => api.get('/departments').then(r => Array.isArray(r.data) ? r.data : (r.data.departments || [])),
+    enabled: isHrAdmin,
+  });
+
+  const { data: allUsersData } = useQuery({
+    queryKey: ['users-list'],
+    queryFn: () => api.get('/users?limit=200').then(r => r.data),
+    enabled: isHrAdmin,
+  });
+
+  const addBalanceMutation = useMutation({
+    mutationFn: (data: Record<string, unknown>) => api.put('/leave/balances', data),
+    onSuccess: () => { toast.success('Balance added'); qc.invalidateQueries({ queryKey: ['leave', 'all-balances'] }); setShowAddBalanceModal(false); resetAddBalance(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
   const createMutation = useMutation({
@@ -304,11 +354,57 @@ export default function LeavePage() {
       {/* HR Admin Tab */}
       {tab === 'admin' && isHrAdmin && (
         <div className="space-y-8">
+
+          {/* Stats summary */}
+          {(() => {
+            const all = teamRequests as Record<string, unknown>[];
+            const pending = all.filter(r => r.status === 'PENDING').length;
+            const approved = all.filter(r => r.status === 'APPROVED').length;
+            const rejected = all.filter(r => r.status === 'REJECTED').length;
+            const totalDays = all.filter(r => r.status === 'APPROVED').reduce((s, r) => s + (r.days as number), 0);
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'Pending Approval', value: pending, color: 'bg-yellow-500' },
+                  { label: 'Approved', value: approved, color: 'bg-green-500' },
+                  { label: 'Rejected', value: rejected, color: 'bg-red-500' },
+                  { label: 'Total Days Approved', value: totalDays.toFixed(1), color: 'bg-blue-500' },
+                ].map(card => (
+                  <div key={card.label} className="card">
+                    <div className="flex items-center gap-3">
+                      <div className={`h-10 w-10 rounded-lg ${card.color} flex-shrink-0`} />
+                      <div>
+                        <p className="text-xs text-gray-500">{card.label}</p>
+                        <p className="text-2xl font-bold text-gray-900">{card.value}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* All Leave Requests */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-3">
               <h2 className="font-semibold text-gray-900">All Leave Requests</h2>
-              <div className="flex gap-2">
+              <button
+                onClick={() => exportLeaveCSV(
+                  (teamRequests as Record<string, unknown>[]).filter(r =>
+                    (!adminDeptFilter || (r.user as { departmentId?: string } | undefined)?.departmentId === adminDeptFilter) &&
+                    (!statusFilter || r.status === statusFilter)
+                  ),
+                  `leave-requests-${format(new Date(), 'yyyy-MM-dd')}.csv`
+                )}
+                className="btn-secondary btn-sm flex items-center gap-1.5"
+              >
+                <ArrowDownTrayIcon className="h-4 w-4" /> Export CSV
+              </button>
+            </div>
+
+            {/* Filters row */}
+            <div className="flex flex-wrap gap-3 items-end">
+              <div className="flex gap-2 flex-wrap">
                 {['', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].map(s => (
                   <button key={s} onClick={() => setStatusFilter(s)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${statusFilter === s ? 'bg-primary-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
@@ -316,11 +412,40 @@ export default function LeavePage() {
                   </button>
                 ))}
               </div>
+
+              {(departments as { id: string; name: string }[]).length > 0 && (
+                <select
+                  value={adminDeptFilter}
+                  onChange={e => setAdminDeptFilter(e.target.value)}
+                  className="input ml-auto"
+                >
+                  <option value="">All Departments</option>
+                  {(departments as { id: string; name: string }[]).map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              )}
+
+              <div className="flex items-center gap-2">
+                <input type="date" value={adminDateFrom} onChange={e => setAdminDateFrom(e.target.value)} className="input" placeholder="From" />
+                <span className="text-gray-400">–</span>
+                <input type="date" value={adminDateTo} onChange={e => setAdminDateTo(e.target.value)} className="input" placeholder="To" />
+                {(adminDateFrom || adminDateTo) && (
+                  <button onClick={() => { setAdminDateFrom(''); setAdminDateTo(''); }} className="text-xs text-red-500 hover:underline whitespace-nowrap">Clear</button>
+                )}
+              </div>
             </div>
-            {(teamRequests as Record<string, unknown>[]).length === 0
-              ? <div className="card text-center py-10 text-gray-400">No leave requests</div>
-              : (teamRequests as Record<string, unknown>[]).map(req => renderRequest(req, true, true))
-            }
+
+            {(() => {
+              const filtered = (teamRequests as Record<string, unknown>[]).filter(r => {
+                if (statusFilter && r.status !== statusFilter) return false;
+                if (adminDateFrom && new Date(r.startDate as string) < new Date(adminDateFrom)) return false;
+                if (adminDateTo && new Date(r.endDate as string) > new Date(adminDateTo)) return false;
+                return true;
+              });
+              if (filtered.length === 0) return <div className="card text-center py-10 text-gray-400">No leave requests match filters</div>;
+              return filtered.map(req => renderRequest(req, true, true));
+            })()}
           </div>
 
           {/* Leave Balances Management */}
@@ -328,10 +453,10 @@ export default function LeavePage() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="font-semibold text-gray-900">Leave Balances — {new Date().getFullYear()}</h2>
               <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setShowBulkEntitlementModal(true)}
-                  className="btn-secondary btn-sm"
-                >
+                <button onClick={() => setShowAddBalanceModal(true)} className="btn-secondary btn-sm flex items-center gap-1.5">
+                  <UserPlusIcon className="h-4 w-4" /> Add Balance
+                </button>
+                <button onClick={() => setShowBulkEntitlementModal(true)} className="btn-secondary btn-sm">
                   Bulk Set Entitlement
                 </button>
               </div>
@@ -346,6 +471,7 @@ export default function LeavePage() {
                       <th className="th">Employee</th>
                       <th className="th">Leave Type</th>
                       <th className="th">Entitled</th>
+                      <th className="th">Pending</th>
                       <th className="th">Used</th>
                       <th className="th">Remaining</th>
                       <th className="th"></th>
@@ -354,19 +480,23 @@ export default function LeavePage() {
                   <tbody className="divide-y divide-gray-100 bg-white">
                     {(allBalances as Record<string, unknown>[]).map((b) => {
                       const u = b.user as { firstName: string; lastName: string } | undefined;
-                      const remaining = (b.entitled as number) - (b.used as number);
+                      const entitled = b.entitled as number;
+                      const used = b.used as number;
+                      const pending = (b.pending as number) || 0;
+                      const remaining = entitled - used - pending;
                       return (
                         <tr key={b.id as string} className="tr-hover">
                           <td className="td font-medium">{u?.firstName} {u?.lastName}</td>
                           <td className="td"><span className={LEAVE_COLORS[b.leaveType as string] || 'badge-gray'}>{(b.leaveType as string).replace(/_/g, ' ')}</span></td>
-                          <td className="td">{b.entitled as number}</td>
-                          <td className="td">{b.used as number}</td>
+                          <td className="td">{entitled}</td>
+                          <td className="td text-orange-500">{pending > 0 ? pending : '—'}</td>
+                          <td className="td">{used}</td>
                           <td className="td">
                             <span className={remaining < 0 ? 'text-red-600 font-semibold' : remaining === 0 ? 'text-orange-500' : 'text-green-600'}>{remaining}</span>
                           </td>
                           <td className="td">
                             <div className="flex gap-2">
-                              <button onClick={() => openBalanceModal(b.userId as string, `${u?.firstName} ${u?.lastName}`, b.leaveType as string, b.entitled as number)} className="btn-secondary btn-sm">Edit</button>
+                              <button onClick={() => openBalanceModal(b.userId as string, `${u?.firstName} ${u?.lastName}`, b.leaveType as string, entitled)} className="btn-secondary btn-sm">Edit</button>
                               <button onClick={() => { if (window.confirm('Delete this balance record?')) deleteBalanceMutation.mutate(b.id as string); }} className="text-red-400 hover:text-red-600 btn-sm"><TrashIcon className="h-4 w-4" /></button>
                             </div>
                           </td>
@@ -549,6 +679,44 @@ export default function LeavePage() {
                 <button type="button" onClick={() => setShowBulkEntitlementModal(false)} className="btn-secondary">Cancel</button>
                 <button type="submit" disabled={bulkEntitlementMutation.isPending} className="btn-primary">
                   {bulkEntitlementMutation.isPending ? 'Setting…' : 'Set for All Employees'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Balance Modal */}
+      {showAddBalanceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-gray-900">Add Leave Balance</h3>
+            <p className="text-sm text-gray-500">Set or create a leave balance entry for an employee.</p>
+            <form onSubmit={handleSubmitAddBalance(d => addBalanceMutation.mutate({ ...d as Record<string, unknown>, year: new Date().getFullYear() }))} className="space-y-4">
+              <div>
+                <label className="label">Employee *</label>
+                <select {...registerAddBalance('userId', { required: true })} className="input">
+                  <option value="">Select employee</option>
+                  {(allUsersData?.users || []).map((u: Record<string, unknown>) => (
+                    <option key={u.id as string} value={u.id as string}>{u.firstName as string} {u.lastName as string}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label">Leave Type *</label>
+                <select {...registerAddBalance('leaveType', { required: true })} className="input">
+                  <option value="">Select type</option>
+                  {ALL_LEAVE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Entitled Days *</label>
+                <input {...registerAddBalance('entitled', { required: true, min: 0, valueAsNumber: true })} type="number" min={0} className="input" placeholder="e.g. 14" />
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => { setShowAddBalanceModal(false); resetAddBalance(); }} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={addBalanceMutation.isPending} className="btn-primary">
+                  {addBalanceMutation.isPending ? 'Saving…' : 'Save Balance'}
                 </button>
               </div>
             </form>

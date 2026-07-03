@@ -8,7 +8,7 @@ import { AppError } from '../middleware/error.middleware';
 import { UserRole } from '@prisma/client';
 import { notificationQueue } from '../services/queue.service';
 
-const LEAVE_DOC_DIR = 'uploads/leave-docs/';
+const LEAVE_DOC_DIR = path.join(process.cwd(), 'uploads', 'leave-docs');
 fs.mkdirSync(LEAVE_DOC_DIR, { recursive: true });
 
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.doc', '.docx'];
@@ -87,6 +87,8 @@ router.post('/upload-doc', (req: AuthRequest, res: Response, next: NextFunction)
     }
     if (!req.file) return next(new AppError('No file received. Please select a file to upload.', 400));
     const url = `/uploads/leave-docs/${req.file.filename}`;
+    // Log successful upload for debugging
+    console.log(`[leave-upload] saved ${req.file.originalname} → ${url}`);
     res.json({ url, filename: req.file.originalname });
   });
 });

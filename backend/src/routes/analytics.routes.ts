@@ -112,22 +112,32 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
 
 router.get('/trends', authorize(...ANALYTICS_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { months = '12', departmentId } = req.query;
+    const { months = '12', departmentId, from, to } = req.query;
     const result = [];
     const now = new Date();
     const userFilter: Record<string, unknown> = { organizationId: req.user!.organizationId };
     if (departmentId) userFilter.departmentId = departmentId as string;
 
-    for (let i = Number(months) - 1; i >= 0; i--) {
+    const numMonths = Number(months);
+    for (let i = numMonths - 1; i >= 0; i--) {
       const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+
+      // If from/to are provided, only include months that overlap the range
+      if (from && end < new Date(from as string)) continue;
+      if (to && start > new Date(to as string)) continue;
+
+      // Clamp to from/to if specified
+      const clampedStart = from && new Date(from as string) > start ? new Date(from as string) : start;
+      const clampedEnd = to && new Date(to as string) < end ? new Date(to as string) : end;
+
       const [totalAgg, billableAgg] = await Promise.all([
         prisma.timesheetEntry.aggregate({
-          where: { date: { gte: start, lte: end }, timesheet: { user: userFilter } },
+          where: { date: { gte: clampedStart, lte: clampedEnd }, timesheet: { user: userFilter } },
           _sum: { hours: true },
         }),
         prisma.timesheetEntry.aggregate({
-          where: { date: { gte: start, lte: end }, isBillable: true, timesheet: { user: userFilter } },
+          where: { date: { gte: clampedStart, lte: clampedEnd }, isBillable: true, timesheet: { user: userFilter } },
           _sum: { hours: true },
         }),
       ]);
