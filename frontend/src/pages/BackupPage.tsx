@@ -12,13 +12,25 @@ import api from '../lib/api';
 
 type TabId = 'export' | 'restore' | 'ftp' | 'cloud';
 
+const defaultCloudForm = { endpoint: '', bucket: '', accessKey: '', secretKey: '', region: 'us-east-1' };
+
+function saveCloudConfig(cfg: typeof defaultCloudForm) {
+  try { localStorage.setItem('backup_cloud_config', JSON.stringify(cfg)); } catch { /* ignore */ }
+}
+
 export default function BackupPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>('export');
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [ftpForm, setFtpForm] = useState({ host: '', port: '21', user: '', password: '', remotePath: '/backups' });
-  const [cloudForm, setCloudForm] = useState({ endpoint: '', bucket: '', accessKey: '', secretKey: '', region: 'us-east-1' });
+  const [cloudForm, setCloudForm] = useState(() => {
+    try {
+      const saved = localStorage.getItem('backup_cloud_config');
+      if (saved) return JSON.parse(saved) as typeof defaultCloudForm;
+    } catch { /* ignore */ }
+    return defaultCloudForm;
+  });
 
   const { data: logs } = useQuery({
     queryKey: ['backup-logs'],
@@ -275,28 +287,28 @@ export default function BackupPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3Endpoint')} *</label>
-                  <input type="url" value={cloudForm.endpoint} onChange={e => setCloudForm(f => ({ ...f, endpoint: e.target.value }))}
+                  <input type="url" value={cloudForm.endpoint} onChange={e => setCloudForm(f => { const n = { ...f, endpoint: e.target.value }; saveCloudConfig(n); return n; })}
                     className="input" placeholder="https://nyc3.digitaloceanspaces.com" />
                   <p className="text-xs text-gray-400 mt-1">DO Spaces: https://nyc3.digitaloceanspaces.com · AWS S3: https://s3.amazonaws.com · R2: https://&lt;account&gt;.r2.cloudflarestorage.com</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3Bucket')} *</label>
-                  <input type="text" value={cloudForm.bucket} onChange={e => setCloudForm(f => ({ ...f, bucket: e.target.value }))}
+                  <input type="text" value={cloudForm.bucket} onChange={e => setCloudForm(f => { const n = { ...f, bucket: e.target.value }; saveCloudConfig(n); return n; })}
                     className="input" placeholder="my-backups" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3Region')}</label>
-                  <input type="text" value={cloudForm.region} onChange={e => setCloudForm(f => ({ ...f, region: e.target.value }))}
+                  <input type="text" value={cloudForm.region} onChange={e => setCloudForm(f => { const n = { ...f, region: e.target.value }; saveCloudConfig(n); return n; })}
                     className="input" placeholder="us-east-1" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3AccessKey')} *</label>
-                  <input type="text" value={cloudForm.accessKey} onChange={e => setCloudForm(f => ({ ...f, accessKey: e.target.value }))}
+                  <input type="text" value={cloudForm.accessKey} onChange={e => setCloudForm(f => { const n = { ...f, accessKey: e.target.value }; saveCloudConfig(n); return n; })}
                     className="input" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('backup.s3SecretKey')} *</label>
-                  <input type="password" value={cloudForm.secretKey} onChange={e => setCloudForm(f => ({ ...f, secretKey: e.target.value }))}
+                  <input type="password" value={cloudForm.secretKey} onChange={e => setCloudForm(f => { const n = { ...f, secretKey: e.target.value }; saveCloudConfig(n); return n; })}
                     className="input" />
                 </div>
               </div>

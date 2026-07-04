@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as net from 'net';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
@@ -218,9 +219,21 @@ router.post('/cloud', async (req: AuthRequest, res: Response, next: NextFunction
     const content = JSON.stringify({ exportedAt: new Date().toISOString(), version: '1.0', organization: org, data: { users, timesheets, projects, clients, expenses, invoices } }, null, 2);
     const sizeBytes = Buffer.byteLength(content, 'utf8');
 
-    // Build S3 presigned URL manually using HMAC-SHA256 (AWS Signature v4)
-    // This is a simplified implementation — add @aws-sdk/client-s3 for production
-    const destination = `${endpoint}/${bucket}/${fileName}`;
+    // Upload to S3-compatible storage
+    const s3 = new S3Client({
+      endpoint,
+      region,
+      credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+      forcePathStyle: false, // DO Spaces and AWS use virtual-hosted style
+    });
+
+    await s3.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: fileName,
+      Body: content,
+      ContentType: 'application/json',
+      ContentLength: sizeBytes,
+    }));
 
     await prisma.backupLog.create({
       data: {
@@ -235,13 +248,24 @@ router.post('/cloud', async (req: AuthRequest, res: Response, next: NextFunction
     });
 
     res.json({
-      message: 'Cloud backup configuration accepted. Add @aws-sdk/client-s3 to backend/package.json for full S3/Spaces/R2 upload support.',
+      message: 'Backup uploaded successfully to cloud storage.',
       fileName,
-      destination,
+      destination: `${endpoint}/${bucket}/${fileName}`,
       sizeBytes,
-      note: `Endpoint: ${endpoint}, Bucket: ${bucket}, Region: ${region}. Use: npm install @aws-sdk/client-s3`,
     });
   } catch (err) {
+    const orgId = req.user!.organizationId;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await prisma.backupLog.create({
+      data: {
+        organizationId: orgId,
+        createdBy: req.user!.userId,
+        type: 's3',
+        status: 'failed',
+        fileName: `backup-${orgId}-${new Date().toISOString().slice(0, 10)}.json`,
+        errorMessage: errorMsg,
+      },
+    });
     next(err);
   }
 });
