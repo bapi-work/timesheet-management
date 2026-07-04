@@ -1,5 +1,5 @@
 #!/bin/bash
-# Backup: PostgreSQL dump + uploaded files + .env → timestamped zip
+# Backup: PostgreSQL dump + uploaded files + .env → timestamped tar.gz
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,13 +9,12 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_NAME="timesheet_backup_${TIMESTAMP}"
 WORK_DIR="/tmp/${BACKUP_NAME}"
 
-# Postgres connection from env or defaults
 POSTGRES_USER="${POSTGRES_USER:-timesheet}"
 POSTGRES_DB="${POSTGRES_DB:-timesheet_db}"
 
 echo "=== Timesheet Management Backup ==="
 echo "Timestamp : $TIMESTAMP"
-echo "Output    : $BACKUP_DIR/${BACKUP_NAME}.zip"
+echo "Output    : $BACKUP_DIR/${BACKUP_NAME}.tar.gz"
 echo ""
 
 mkdir -p "$BACKUP_DIR" "$WORK_DIR"
@@ -47,15 +46,15 @@ cp "$PROJECT_DIR/nginx/nginx.conf"   "$WORK_DIR/config/nginx.conf"
 [ -f "$PROJECT_DIR/nginx/nginx-ssl.conf" ] && \
   cp "$PROJECT_DIR/nginx/nginx-ssl.conf" "$WORK_DIR/config/nginx-ssl.conf"
 
-# Write a manifest so restore knows what version this came from
+# Manifest
 cat > "$WORK_DIR/MANIFEST.txt" <<EOF
 Timesheet Management Backup
 ============================
-Created   : $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-Hostname  : $(hostname)
-Database  : $POSTGRES_DB
+Created    : $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+Hostname   : $(hostname)
+Database   : $POSTGRES_DB
 App version: $(grep '"version"' "$PROJECT_DIR/backend/package.json" | head -1 | awk -F'"' '{print $4}' 2>/dev/null || echo "unknown")
-Contents  :
+Contents   :
   database.sql        — full PostgreSQL dump (pg_dump plain format)
   uploads/            — user-uploaded files (receipts, leave documents)
   config/.env         — environment variables (keep this file secret)
@@ -63,23 +62,22 @@ Contents  :
   config/nginx.conf
 EOF
 
-# Create zip
+# Create tar.gz
 echo ""
 echo "Packaging..."
-cd /tmp
-zip -qr "$BACKUP_DIR/${BACKUP_NAME}.zip" "$BACKUP_NAME"
+tar -czf "$BACKUP_DIR/${BACKUP_NAME}.tar.gz" -C /tmp "$BACKUP_NAME"
 rm -rf "$WORK_DIR"
 
-SIZE=$(du -sh "$BACKUP_DIR/${BACKUP_NAME}.zip" | cut -f1)
+SIZE=$(du -sh "$BACKUP_DIR/${BACKUP_NAME}.tar.gz" | cut -f1)
 echo ""
 echo "=== Backup complete ==="
-echo "File : $BACKUP_DIR/${BACKUP_NAME}.zip"
+echo "File : $BACKUP_DIR/${BACKUP_NAME}.tar.gz"
 echo "Size : $SIZE"
 echo ""
 
-# Keep only the 10 most recent backups to save disk space
-BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/timesheet_backup_*.zip 2>/dev/null | wc -l)
+# Keep only the 10 most recent backups
+BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/timesheet_backup_*.tar.gz 2>/dev/null | wc -l)
 if [ "$BACKUP_COUNT" -gt 10 ]; then
   echo "Rotating old backups (keeping latest 10)..."
-  ls -1t "$BACKUP_DIR"/timesheet_backup_*.zip | tail -n +11 | xargs rm -f
+  ls -1t "$BACKUP_DIR"/timesheet_backup_*.tar.gz | tail -n +11 | xargs rm -f
 fi

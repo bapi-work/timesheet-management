@@ -1,5 +1,5 @@
 #!/bin/bash
-# Restore: import a backup zip created by backup.sh
+# Restore: import a backup tar.gz created by backup.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,10 +8,10 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BACKUP_FILE="${1:-}"
 
 if [ -z "$BACKUP_FILE" ]; then
-  echo "Usage: $0 <backup-file.zip>"
+  echo "Usage: $0 <backup-file.tar.gz>"
   echo ""
   echo "Available backups:"
-  ls -lht "${PROJECT_DIR}/backups"/timesheet_backup_*.zip 2>/dev/null || echo "  (none found in ${PROJECT_DIR}/backups/)"
+  ls -lht "${PROJECT_DIR}/backups"/timesheet_backup_*.tar.gz 2>/dev/null || echo "  (none found in ${PROJECT_DIR}/backups/)"
   exit 1
 fi
 
@@ -40,16 +40,16 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 # Extract
 echo "[1/4] Extracting backup..."
-unzip -q "$BACKUP_FILE" -d "$WORK_DIR"
+tar -xzf "$BACKUP_FILE" -C "$WORK_DIR"
 
-# Find the inner folder (backup zip has one top-level dir)
+# Find the inner folder
 INNER_DIR=$(find "$WORK_DIR" -maxdepth 1 -mindepth 1 -type d | head -1)
 if [ -z "$INNER_DIR" ]; then
-  echo "Error: unexpected backup structure — no directory found inside zip"
+  echo "Error: unexpected backup structure — no directory found inside archive"
   exit 1
 fi
 
-# Show manifest if present
+# Show manifest
 if [ -f "$INNER_DIR/MANIFEST.txt" ]; then
   echo ""
   cat "$INNER_DIR/MANIFEST.txt"
@@ -63,7 +63,6 @@ if [ ! -f "$INNER_DIR/database.sql" ]; then
   exit 1
 fi
 
-# Drop existing connections and recreate the database
 docker compose -f "$PROJECT_DIR/docker-compose.yml" exec -T postgres \
   psql -U "$POSTGRES_USER" -d postgres -c \
   "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$POSTGRES_DB' AND pid <> pg_backend_pid();" \
@@ -91,20 +90,17 @@ else
   echo "      No uploads folder in backup — skipping"
 fi
 
-# 4. Restore config (optional — prompt user)
+# 4. Config files — save for manual review, never auto-apply
 echo "[4/4] Configuration files..."
 if [ -d "$INNER_DIR/config" ]; then
-  echo "      Backed-up config files are in: $INNER_DIR/config/"
-  echo "      They were NOT automatically applied to avoid overwriting your live settings."
-  echo "      Review and apply manually if needed:"
-  ls "$INNER_DIR/config/"
-  # Copy to a safe location for review
-  mkdir -p "$PROJECT_DIR/backups/restored_config_$$"
-  cp -r "$INNER_DIR/config/." "$PROJECT_DIR/backups/restored_config_$$/"
-  echo "      Saved to: $PROJECT_DIR/backups/restored_config_$$/"
+  RESTORE_CONFIG_DIR="$PROJECT_DIR/backups/restored_config_$$"
+  mkdir -p "$RESTORE_CONFIG_DIR"
+  cp -r "$INNER_DIR/config/." "$RESTORE_CONFIG_DIR/"
+  echo "      Saved to: $RESTORE_CONFIG_DIR/"
+  echo "      Review and apply manually if needed (not auto-applied to avoid overwriting live settings)"
 fi
 
-# Restart backend to pick up restored data
+# Restart backend
 echo ""
 echo "Restarting backend..."
 docker compose -f "$PROJECT_DIR/docker-compose.yml" restart backend > /dev/null
