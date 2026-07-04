@@ -6,7 +6,9 @@
       "Bash(DATABASE_URL=\"postgresql://timesheet:timesheetpass@localhost:5432/timesheet_db\" npx prisma migrate dev --name add_daytype_and_team_org)",
       "Bash(DATABASE_URL=\"postgresql://timesheet:timesheetpass@localhost:5432/timesheet_db\" npx prisma migrate dev --create-only --name add_daytype_and_team_org)",
       "Bash(git config *)",
-      "Bash(chmod +x .githooks/pre-push)"
+      "Bash(chmod +x .githooks/pre-push)",
+      "Bash(git pull *)",
+      "Bash(git stash *)"
     ]
   }
 }
