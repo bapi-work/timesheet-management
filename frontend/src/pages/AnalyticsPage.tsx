@@ -461,7 +461,7 @@ export default function AnalyticsPage() {
                     <tr key={u.id as string} className="tr-hover">
                       <td className="td">
                         <span className="font-medium">{u.firstName as string} {u.lastName as string}</span>
-                        {u.employeeId && <span className="ml-1 text-xs text-gray-400">({u.employeeId as string})</span>}
+                        {(u.employeeId as string | null) && <span className="ml-1 text-xs text-gray-400">({u.employeeId as string})</span>}
                       </td>
                       <td className="td text-gray-500 text-sm">{(u.department as { name: string } | null)?.name || '—'}</td>
                       <td className="td">{(u.totalHours as number).toFixed(2)}h</td>
@@ -518,7 +518,7 @@ export default function AnalyticsPage() {
                     <tr key={i} className="tr-hover">
                       <td className="td">
                         <span className="font-medium">{p.name as string}</span>
-                        {p.code && <span className="ml-1 text-xs text-gray-400">({p.code as string})</span>}
+                        {(p.code as string | null) && <span className="ml-1 text-xs text-gray-400">({p.code as string})</span>}
                       </td>
                       <td className="td text-gray-500">{(p.clientName as string) || '—'}</td>
                       <td className="td text-gray-500">{budget ? `${budget}h` : '—'}</td>
