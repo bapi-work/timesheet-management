@@ -167,13 +167,13 @@ router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunct
     });
 
     if (user?.managerId) {
-      await notificationQueue.add({
+      notificationQueue.add({
         userId: user.managerId,
         type: 'APPROVAL_REQUIRED',
         title: 'Leave Request Pending',
         message: 'A leave request needs your approval.',
         data: { leaveRequestId: request.id },
-      });
+      }).catch(() => { /* non-fatal: notification queue unavailable */ });
     }
 
     res.status(201).json(request);
@@ -206,13 +206,13 @@ router.post('/requests/:id/approve', async (req: AuthRequest, res: Response, nex
       return req2;
     });
 
-    await notificationQueue.add({
+    notificationQueue.add({
       userId: request.userId,
       type: 'LEAVE_UPDATE',
       title: 'Leave Approved',
       message: 'Your leave request has been approved.',
       data: { leaveRequestId: request.id },
-    });
+    }).catch(() => {});
 
     res.json(updated);
   } catch (err) {
@@ -233,13 +233,13 @@ router.post('/requests/:id/reject', async (req: AuthRequest, res: Response, next
       data: { status: 'REJECTED', approverComments: comments },
     });
 
-    await notificationQueue.add({
+    notificationQueue.add({
       userId: request.userId,
       type: 'LEAVE_UPDATE',
       title: 'Leave Rejected',
       message: `Your leave request was rejected: ${comments}`,
       data: { leaveRequestId: request.id },
-    });
+    }).catch(() => {});
 
     res.json(updated);
   } catch (err) {
