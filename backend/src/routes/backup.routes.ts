@@ -219,9 +219,21 @@ router.post('/cloud', async (req: AuthRequest, res: Response, next: NextFunction
     const content = JSON.stringify({ exportedAt: new Date().toISOString(), version: '1.0', organization: org, data: { users, timesheets, projects, clients, expenses, invoices } }, null, 2);
     const sizeBytes = Buffer.byteLength(content, 'utf8');
 
+    // Normalize endpoint: if user pasted the bucket-specific URL (e.g.
+    // https://bucket.sgp1.digitaloceanspaces.com), strip the bucket subdomain
+    // so the SDK doesn't double-prepend it.
+    let sdkEndpoint = endpoint;
+    try {
+      const u = new URL(endpoint);
+      if (u.hostname.startsWith(bucket + '.')) {
+        u.hostname = u.hostname.slice(bucket.length + 1);
+        sdkEndpoint = `${u.protocol}//${u.hostname}`;
+      }
+    } catch { /* leave sdkEndpoint as-is */ }
+
     // Upload to S3-compatible storage
     const s3 = new S3Client({
-      endpoint,
+      endpoint: sdkEndpoint,
       region,
       credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
       forcePathStyle: false, // DO Spaces and AWS use virtual-hosted style

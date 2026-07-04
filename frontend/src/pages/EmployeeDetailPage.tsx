@@ -9,6 +9,12 @@ import { ADMIN_ROLES, SYSTEM_ADMIN_ROLES, hasRole } from '../lib/roles';
 import EmployeeFormModal from '../components/EmployeeFormModal';
 import toast from 'react-hot-toast';
 
+const ALL_LEAVE_TYPES = ['ANNUAL', 'SICK', 'MATERNITY', 'PATERNITY', 'UNPAID', 'COMPENSATORY', 'OTHER'];
+const LEAVE_COLORS: Record<string, string> = {
+  ANNUAL: 'badge-blue', SICK: 'badge-red', MATERNITY: 'badge-purple',
+  PATERNITY: 'badge-purple', UNPAID: 'badge-gray', COMPENSATORY: 'badge-green', OTHER: 'badge-yellow',
+};
+
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -17,6 +23,7 @@ export default function EmployeeDetailPage() {
   const isAdmin = hasRole(user?.role, ADMIN_ROLES);
   const isSystemAdmin = hasRole(user?.role, SYSTEM_ADMIN_ROLES);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [leaveBalanceModal, setLeaveBalanceModal] = useState<{ leaveType: string; balanceId?: string; entitled: number } | null>(null);
 
   const { data: employee, isLoading } = useQuery({
     queryKey: ['employee', id],
@@ -26,6 +33,32 @@ export default function EmployeeDetailPage() {
   const { data: timesheets = [] } = useQuery({
     queryKey: ['employee', id, 'timesheets'],
     queryFn: () => api.get(`/users/${id}/timesheets`).then(r => r.data),
+  });
+
+  const { data: allBalances = [] } = useQuery({
+    queryKey: ['leave', 'all-balances'],
+    queryFn: () => api.get('/leave/balances/all').then(r => r.data),
+    enabled: isAdmin,
+  });
+
+  const updateBalanceMutation = useMutation({
+    mutationFn: (data: { userId: string; leaveType: string; entitled: number; year: number }) =>
+      api.put('/leave/balances', data),
+    onSuccess: () => {
+      toast.success('Leave balance updated');
+      qc.invalidateQueries({ queryKey: ['leave', 'all-balances'] });
+      setLeaveBalanceModal(null);
+    },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
+  });
+
+  const deleteBalanceMutation = useMutation({
+    mutationFn: (balanceId: string) => api.delete(`/leave/balances/${balanceId}`),
+    onSuccess: () => {
+      toast.success('Leave balance removed');
+      qc.invalidateQueries({ queryKey: ['leave', 'all-balances'] });
+    },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
   const [resetPasswordResult, setResetPasswordResult] = useState<string | null>(null);
@@ -174,6 +207,97 @@ export default function EmployeeDetailPage() {
           </table>
         </div>
       </div>
+
+      {/* Leave Balances — admins only */}
+      {isAdmin && (() => {
+        const empBalances = (allBalances as Record<string, unknown>[]).filter(b => b.userId === id);
+        const balanceMap = new Map(empBalances.map(b => [b.leaveType as string, b]));
+        return (
+          <div className="card p-0 overflow-hidden">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <span className="font-semibold text-gray-900">Leave Balances — {new Date().getFullYear()}</span>
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="th text-left pl-6">Leave Type</th>
+                  <th className="th text-center">Entitled</th>
+                  <th className="th text-center">Pending</th>
+                  <th className="th text-center">Used</th>
+                  <th className="th text-center">Remaining</th>
+                  <th className="th pr-6"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {ALL_LEAVE_TYPES.map(lt => {
+                  const b = balanceMap.get(lt);
+                  const entitled = (b?.entitled as number) || 0;
+                  const used = (b?.used as number) || 0;
+                  const pending = (b?.pending as number) || 0;
+                  const remaining = entitled - used - pending;
+                  return (
+                    <tr key={lt} className="hover:bg-gray-50/50">
+                      <td className="td pl-6"><span className={LEAVE_COLORS[lt] || 'badge-gray'}>{lt.replace(/_/g, ' ')}</span></td>
+                      <td className="td text-center">{b ? entitled : <span className="text-gray-300">—</span>}</td>
+                      <td className="td text-center">{b ? (pending || '—') : <span className="text-gray-300">—</span>}</td>
+                      <td className="td text-center">{b ? used : <span className="text-gray-300">—</span>}</td>
+                      <td className="td text-center">
+                        {b ? <span className={remaining < 0 ? 'text-red-600 font-semibold' : remaining === 0 ? 'text-orange-500' : 'text-green-600 font-semibold'}>{remaining}</span> : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="td text-right pr-6">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setLeaveBalanceModal({ leaveType: lt, balanceId: b?.id as string | undefined, entitled })}
+                            className="text-xs text-primary-600 hover:underline"
+                          >{b ? 'Edit' : '+ Set'}</button>
+                          {b && (
+                            <button
+                              onClick={() => { if (confirm(`Remove ${lt} balance for this employee?`)) deleteBalanceMutation.mutate(b.id as string); }}
+                              className="text-xs text-red-500 hover:underline"
+                            >Delete</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
+      {/* Leave Balance Edit Modal */}
+      {leaveBalanceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-semibold text-gray-900">Set {leaveBalanceModal.leaveType.replace(/_/g, ' ')} Balance</h3>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Days Entitled</label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                defaultValue={leaveBalanceModal.entitled}
+                id="leave-entitled-input"
+                className="input w-full"
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setLeaveBalanceModal(null)} className="btn-secondary">Cancel</button>
+              <button
+                disabled={updateBalanceMutation.isPending}
+                onClick={() => {
+                  const val = parseFloat((document.getElementById('leave-entitled-input') as HTMLInputElement).value);
+                  if (isNaN(val) || val < 0) { toast.error('Enter a valid number'); return; }
+                  updateBalanceMutation.mutate({ userId: id!, leaveType: leaveBalanceModal.leaveType, entitled: val, year: new Date().getFullYear() });
+                }}
+                className="btn-primary"
+              >Save</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Security — system admin only */}
       {isSystemAdmin && (
