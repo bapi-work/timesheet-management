@@ -499,7 +499,7 @@ export default function LeavePage() {
 
               const filteredUsers = allUsers.filter(u => {
                 if (u.role === 'SYSTEM_ADMIN') return false;
-                if (balanceDeptFilter && (u.departmentId as string | undefined) !== balanceDeptFilter) return false;
+                if (balanceDeptFilter && (u.department as { id: string } | undefined)?.id !== balanceDeptFilter) return false;
                 if (balanceSearch) {
                   const name = `${u.firstName} ${u.lastName} ${u.employeeId || ''}`.toLowerCase();
                   if (!name.includes(balanceSearch.toLowerCase())) return false;
