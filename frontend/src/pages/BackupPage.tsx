@@ -40,17 +40,18 @@ export default function BackupPage() {
   const exportMutation = useMutation({
     mutationFn: () =>
       api.get('/backup/export', { responseType: 'blob' }).then(r => {
-        const url = window.URL.createObjectURL(new Blob([r.data]));
+        const fileName = `backup-${new Date().toISOString().slice(0, 10)}.json.gz`;
+        const url = window.URL.createObjectURL(new Blob([r.data], { type: 'application/gzip' }));
         const a = document.createElement('a');
         a.href = url;
-        a.download = `backup-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = fileName;
         a.click();
         window.URL.revokeObjectURL(url);
         return r.data;
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['backup-logs'] });
-      toast.success('Backup downloaded successfully');
+      toast.success('Backup downloaded successfully (.json.gz)');
     },
     onError: () => toast.error('Export failed'),
   });
@@ -58,11 +59,17 @@ export default function BackupPage() {
   const restoreMutation = useMutation({
     mutationFn: async () => {
       if (!restoreFile) throw new Error('No file selected');
+      const isGz = restoreFile.name.endsWith('.gz') || restoreFile.name.endsWith('.gzip');
+      if (isGz) {
+        const arrayBuf = await restoreFile.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+        return api.post('/backup/restore', { data: base64, fileType: 'gz' }).then(r => r.data);
+      }
       const text = await restoreFile.text();
       const data = JSON.parse(text);
       return api.post('/backup/restore', { data }).then(r => r.data);
     },
-    onSuccess: (result: { message: string; tables: string[] }) => {
+    onSuccess: (result: { message: string; tables: string[]; recordCounts?: Record<string, number> }) => {
       toast.success(result.message || 'Restore info retrieved');
     },
     onError: (e: Error) => toast.error(e.message || 'Restore failed'),
@@ -133,16 +140,16 @@ export default function BackupPage() {
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h3 className="font-semibold text-blue-900 mb-1">Export All Data</h3>
                 <p className="text-sm text-blue-700">
-                  Downloads a complete JSON backup of your organisation's data including timesheets, projects,
-                  clients, expenses, invoices, departments, leave requests and attendance records.
-                  Passwords and MFA secrets are excluded.
+                  Downloads a complete compressed backup (<strong>.json.gz</strong>) of your organisation's data including timesheets, projects,
+                  clients, expenses, invoices, departments, leave balances, leave requests, teams and attendance records.
+                  Passwords and MFA secrets are excluded. The file is gzip-compressed — typically 70–90% smaller than a raw JSON.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div className="bg-gray-50 rounded-lg p-3">
                   <p className="font-medium text-gray-700">Included</p>
                   <ul className="mt-1 space-y-0.5 text-gray-600">
-                    {['Users (no passwords)', 'Timesheets & Entries', 'Projects & Tasks', 'Clients', 'Expenses', 'Invoices', 'Departments', 'Leave Requests', 'Attendance Records'].map(i => (
+                    {['Users (no passwords)', 'Timesheets & Entries', 'Projects & Tasks', 'Clients', 'Expenses', 'Invoices', 'Departments', 'Teams', 'Leave Requests', 'Leave Balances', 'Public Holidays', 'Attendance Records'].map(i => (
                       <li key={i} className="flex items-center gap-1">
                         <CheckCircleIcon className="h-3.5 w-3.5 text-green-500" /> {i}
                       </li>
@@ -177,8 +184,8 @@ export default function BackupPage() {
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <h3 className="font-semibold text-yellow-900 mb-1">⚠️ Restore / Import</h3>
                 <p className="text-sm text-yellow-700">
-                  Upload a previously exported JSON backup file to validate and inspect its contents.
-                  Full data restoration requires DBA access or running <code className="bg-yellow-100 px-1 rounded">prisma db seed</code> with the backup data.
+                  Upload a previously exported backup file (<strong>.json</strong> or <strong>.json.gz</strong>) to validate and inspect its contents.
+                  The file will be decompressed and its record counts shown. Full data restoration requires DBA access.
                 </p>
               </div>
               <div
@@ -187,10 +194,10 @@ export default function BackupPage() {
                 onDrop={e => {
                   e.preventDefault();
                   const file = e.dataTransfer.files[0];
-                  if (file?.type === 'application/json' || file?.name.endsWith('.json')) {
+                  if (file?.name.endsWith('.json') || file?.name.endsWith('.gz')) {
                     setRestoreFile(file);
                   } else {
-                    toast.error('Please drop a .json file');
+                    toast.error('Please drop a .json or .json.gz file');
                   }
                 }}
                 onClick={() => document.getElementById('restore-file-input')?.click()}
@@ -198,7 +205,7 @@ export default function BackupPage() {
                 <input
                   id="restore-file-input"
                   type="file"
-                  accept=".json"
+                  accept=".json,.json.gz,.gz"
                   className="hidden"
                   onChange={e => setRestoreFile(e.target.files?.[0] || null)}
                 />
@@ -210,7 +217,7 @@ export default function BackupPage() {
                   </div>
                 ) : (
                   <div>
-                    <p className="text-sm text-gray-600">Drop a backup .json file here, or click to browse</p>
+                    <p className="text-sm text-gray-600">Drop a <strong>.json.gz</strong> or <strong>.json</strong> backup file here, or click to browse</p>
                   </div>
                 )}
               </div>
@@ -224,9 +231,18 @@ export default function BackupPage() {
                 </button>
               )}
               {restoreMutation.isSuccess && restoreMutation.data && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm">
-                  <p className="font-medium text-green-800 mb-1">{(restoreMutation.data as { message: string }).message}</p>
-                  <p className="text-green-700">Tables in backup: {(restoreMutation.data as { tables: string[] }).tables?.join(', ')}</p>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm space-y-2">
+                  <p className="font-medium text-green-800">{(restoreMutation.data as { message: string }).message}</p>
+                  {(restoreMutation.data as { recordCounts?: Record<string, number> }).recordCounts && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
+                      {Object.entries((restoreMutation.data as { recordCounts: Record<string, number> }).recordCounts).map(([table, count]) => (
+                        <div key={table} className="bg-white rounded border border-green-200 px-3 py-1.5">
+                          <p className="text-xs text-green-600 capitalize">{table.replace(/([A-Z])/g, ' $1')}</p>
+                          <p className="font-semibold text-green-900">{count} records</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
