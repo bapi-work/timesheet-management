@@ -2,12 +2,23 @@ import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import path from 'path';
+import crypto from 'crypto';
+import fs from 'fs';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 
+const RECEIPT_DIR = path.join(process.cwd(), 'uploads', 'receipts');
+try { fs.mkdirSync(RECEIPT_DIR, { recursive: true }); } catch { /* already exists */ }
+
 const receiptUpload = multer({
-  dest: 'uploads/receipts/',
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, RECEIPT_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, crypto.randomBytes(16).toString('hex') + ext);
+    },
+  }),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.heic'];

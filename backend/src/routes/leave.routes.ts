@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
 import path from 'path';
+import crypto from 'crypto';
 import fs from 'fs';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
@@ -19,7 +20,13 @@ try {
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.doc', '.docx'];
 
 const documentUpload = multer({
-  dest: LEAVE_DOC_DIR,
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, LEAVE_DOC_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, crypto.randomBytes(16).toString('hex') + ext);
+    },
+  }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();

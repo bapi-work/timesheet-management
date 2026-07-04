@@ -240,6 +240,11 @@ export default function LeavePage() {
                 {req.dayType === 'HALF_DAY' && <span className="ml-2 badge-yellow text-xs">Half Day</span>}
               </p>
               {!!(req.reason) && <p className="text-xs text-gray-400 mt-0.5">{req.reason as string}</p>}
+              {!!(req.documentUrl) && (
+                <a href={req.documentUrl as string} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
+                  <PaperClipIcon className="h-3 w-3" /> View Supporting Document
+                </a>
+              )}
               {!!(req.approverComments) && <p className="text-xs text-orange-600 mt-0.5">"{req.approverComments as string}"</p>}
             </div>
           </div>
