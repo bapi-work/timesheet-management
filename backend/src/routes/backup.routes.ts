@@ -21,7 +21,7 @@ async function buildBackupContent(orgId: string): Promise<{ json: string; compre
 
   const [
     org, rawUsers, timesheets, projects, clients, expenses, invoices,
-    departments, leaveRequests, leaveBalances, leaveHolidays, attendance,
+    departments, leaveRequests, leaveBalances, holidays, attendance,
     tasks, teams,
   ] = await Promise.all([
     prisma.organization.findUnique({ where: { id: orgId } }),
@@ -34,13 +34,14 @@ async function buildBackupContent(orgId: string): Promise<{ json: string; compre
     prisma.department.findMany({ where: { organizationId: orgId } }),
     prisma.leaveRequest.findMany({ where: { user: { organizationId: orgId } } }),
     prisma.leaveBalance.findMany({ where: { userId: { in: ids } } }),
-    prisma.publicHoliday.findMany({ where: { organizationId: orgId } }),
+    prisma.holiday.findMany({ where: { organizationId: orgId } }),
     prisma.attendance.findMany({ where: { userId: { in: ids } } }),
     prisma.task.findMany({ where: { project: { organizationId: orgId } } }),
     prisma.team.findMany({ where: { organizationId: orgId }, include: { members: true } }),
   ]);
 
-  const users = rawUsers.map(({ passwordHash: _p, mfaSecret: _m, ...u }) => u);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const users = rawUsers.map(({ passwordHash: _p, mfaSecret: _m, ...u }: { passwordHash: string; mfaSecret: string | null; [key: string]: unknown }) => u);
 
   const backup = {
     exportedAt: new Date().toISOString(),
@@ -49,7 +50,7 @@ async function buildBackupContent(orgId: string): Promise<{ json: string; compre
     data: {
       users, departments, teams, projects, tasks, clients,
       timesheets, expenses, invoices,
-      leaveRequests, leaveBalances, leaveHolidays, attendance,
+      leaveRequests, leaveBalances, holidays, attendance,
     },
   };
 
