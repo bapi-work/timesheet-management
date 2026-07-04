@@ -9,7 +9,12 @@ import { UserRole } from '@prisma/client';
 import { notificationQueue } from '../services/queue.service';
 
 const LEAVE_DOC_DIR = path.join(process.cwd(), 'uploads', 'leave-docs');
-fs.mkdirSync(LEAVE_DOC_DIR, { recursive: true });
+try {
+  fs.mkdirSync(LEAVE_DOC_DIR, { recursive: true });
+  console.log('[leave] upload dir:', LEAVE_DOC_DIR);
+} catch (e) {
+  console.error('[leave] failed to create upload dir:', e);
+}
 
 const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.doc', '.docx'];
 
@@ -21,7 +26,7 @@ const documentUpload = multer({
     if (ALLOWED_EXTENSIONS.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new AppError(`File type not supported. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`, 400));
+      cb(new Error(`File type not supported. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`));
     }
   },
 });
@@ -82,12 +87,13 @@ router.get('/balance', async (req: AuthRequest, res: Response, next: NextFunctio
 router.post('/upload-doc', (req: AuthRequest, res: Response, next: NextFunction) => {
   documentUpload.single('file')(req, res, (err) => {
     if (err) {
+      console.error('[leave-upload] multer error:', err);
       if (err.code === 'LIMIT_FILE_SIZE') return next(new AppError('File too large. Maximum size is 10MB.', 400));
-      return next(err);
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') return next(new AppError('Unexpected file field.', 400));
+      return next(new AppError(err.message || 'File upload failed', 400));
     }
     if (!req.file) return next(new AppError('No file received. Please select a file to upload.', 400));
     const url = `/uploads/leave-docs/${req.file.filename}`;
-    // Log successful upload for debugging
     console.log(`[leave-upload] saved ${req.file.originalname} → ${url}`);
     res.json({ url, filename: req.file.originalname });
   });
