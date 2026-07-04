@@ -66,6 +66,9 @@ export default function LeavePage() {
   const [adminDeptFilter, setAdminDeptFilter] = useState('');
   const [adminDateFrom, setAdminDateFrom] = useState('');
   const [adminDateTo, setAdminDateTo] = useState('');
+  const [balanceSearch, setBalanceSearch] = useState('');
+  const [balanceDeptFilter, setBalanceDeptFilter] = useState('');
+  const [expandedEmployees, setExpandedEmployees] = useState<Set<string>>(new Set());
   const { register: registerAddBalance, handleSubmit: handleSubmitAddBalance, reset: resetAddBalance } = useForm();
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
@@ -448,10 +451,10 @@ export default function LeavePage() {
             })()}
           </div>
 
-          {/* Leave Balances Management */}
+          {/* Leave Balances Management — Employee-centric view */}
           <div className="space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <h2 className="font-semibold text-gray-900">Leave Balances — {new Date().getFullYear()}</h2>
+              <h2 className="font-semibold text-gray-900">Employee Leave Balances — {new Date().getFullYear()}</h2>
               <div className="flex gap-2 flex-wrap">
                 <button onClick={() => setShowAddBalanceModal(true)} className="btn-secondary btn-sm flex items-center gap-1.5">
                   <UserPlusIcon className="h-4 w-4" /> Add Balance
@@ -461,52 +464,185 @@ export default function LeavePage() {
                 </button>
               </div>
             </div>
-            {(allBalances as Record<string, unknown>[]).length === 0 ? (
-              <div className="card text-center py-8 text-gray-400">No leave balances configured. Approve leave requests to create them, or set entitlements manually.</div>
-            ) : (
-              <div className="table-wrapper">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th className="th">Employee</th>
-                      <th className="th">Leave Type</th>
-                      <th className="th">Entitled</th>
-                      <th className="th">Pending</th>
-                      <th className="th">Used</th>
-                      <th className="th">Remaining</th>
-                      <th className="th"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {(allBalances as Record<string, unknown>[]).map((b) => {
-                      const u = b.user as { firstName: string; lastName: string } | undefined;
-                      const entitled = b.entitled as number;
-                      const used = b.used as number;
-                      const pending = (b.pending as number) || 0;
-                      const remaining = entitled - used - pending;
-                      return (
-                        <tr key={b.id as string} className="tr-hover">
-                          <td className="td font-medium">{u?.firstName} {u?.lastName}</td>
-                          <td className="td"><span className={LEAVE_COLORS[b.leaveType as string] || 'badge-gray'}>{(b.leaveType as string).replace(/_/g, ' ')}</span></td>
-                          <td className="td">{entitled}</td>
-                          <td className="td text-orange-500">{pending > 0 ? pending : '—'}</td>
-                          <td className="td">{used}</td>
-                          <td className="td">
-                            <span className={remaining < 0 ? 'text-red-600 font-semibold' : remaining === 0 ? 'text-orange-500' : 'text-green-600'}>{remaining}</span>
-                          </td>
-                          <td className="td">
-                            <div className="flex gap-2">
-                              <button onClick={() => openBalanceModal(b.userId as string, `${u?.firstName} ${u?.lastName}`, b.leaveType as string, entitled)} className="btn-secondary btn-sm">Edit</button>
-                              <button onClick={() => { if (window.confirm('Delete this balance record?')) deleteBalanceMutation.mutate(b.id as string); }} className="text-red-400 hover:text-red-600 btn-sm"><TrashIcon className="h-4 w-4" /></button>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3 items-center">
+              <input
+                type="text"
+                value={balanceSearch}
+                onChange={e => setBalanceSearch(e.target.value)}
+                className="input max-w-xs"
+                placeholder="Search employee..."
+              />
+              {(departments as { id: string; name: string }[]).length > 0 && (
+                <select value={balanceDeptFilter} onChange={e => setBalanceDeptFilter(e.target.value)} className="input max-w-xs">
+                  <option value="">All Departments</option>
+                  {(departments as { id: string; name: string }[]).map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              )}
+              {(balanceSearch || balanceDeptFilter) && (
+                <button onClick={() => { setBalanceSearch(''); setBalanceDeptFilter(''); }} className="text-xs text-red-500 hover:underline">Clear filters</button>
+              )}
+            </div>
+
+            {(() => {
+              const allUsers: Record<string, unknown>[] = (allUsersData as { users?: Record<string, unknown>[] } | undefined)?.users || [];
+              // Build balance lookup: userId -> leaveType -> balance record
+              const balanceMap = new Map<string, Map<string, Record<string, unknown>>>();
+              for (const b of allBalances as Record<string, unknown>[]) {
+                const uid = b.userId as string;
+                if (!balanceMap.has(uid)) balanceMap.set(uid, new Map());
+                balanceMap.get(uid)!.set(b.leaveType as string, b);
+              }
+
+              const filteredUsers = allUsers.filter(u => {
+                if (u.role === 'SYSTEM_ADMIN') return false;
+                if (balanceDeptFilter && (u.departmentId as string | undefined) !== balanceDeptFilter) return false;
+                if (balanceSearch) {
+                  const name = `${u.firstName} ${u.lastName} ${u.employeeId || ''}`.toLowerCase();
+                  if (!name.includes(balanceSearch.toLowerCase())) return false;
+                }
+                return true;
+              });
+
+              if (filteredUsers.length === 0) {
+                return <div className="card text-center py-8 text-gray-400">No employees found</div>;
+              }
+
+              return (
+                <div className="space-y-3">
+                  {filteredUsers.map(u => {
+                    const uid = u.id as string;
+                    const userBalances = balanceMap.get(uid);
+                    const isExpanded = expandedEmployees.has(uid);
+                    const toggleExpand = () => setExpandedEmployees(prev => {
+                      const next = new Set(prev);
+                      if (next.has(uid)) next.delete(uid); else next.add(uid);
+                      return next;
+                    });
+
+                    // Compute totals
+                    let totalEntitled = 0, totalUsed = 0, totalPending = 0;
+                    for (const lt of ALL_LEAVE_TYPES) {
+                      const b = userBalances?.get(lt);
+                      if (b) {
+                        totalEntitled += (b.entitled as number) || 0;
+                        totalUsed += (b.used as number) || 0;
+                        totalPending += (b.pending as number) || 0;
+                      }
+                    }
+                    const totalRemaining = totalEntitled - totalUsed - totalPending;
+                    const dept = u.department as { name: string } | undefined;
+
+                    return (
+                      <div key={uid} className="card p-0 overflow-hidden">
+                        {/* Employee header row */}
+                        <button
+                          onClick={toggleExpand}
+                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-sm font-semibold flex-shrink-0">
+                              {(u.firstName as string)[0]}{(u.lastName as string)[0]}
                             </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                            <div>
+                              <p className="font-medium text-gray-900">{u.firstName as string} {u.lastName as string}</p>
+                              <p className="text-xs text-gray-400">{(u.employeeId as string) || ''}{dept ? ` · ${dept.name}` : ''}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-6 text-sm">
+                            <div className="text-center hidden sm:block">
+                              <p className="text-xs text-gray-400">Entitled</p>
+                              <p className="font-semibold text-gray-700">{totalEntitled}</p>
+                            </div>
+                            <div className="text-center hidden sm:block">
+                              <p className="text-xs text-gray-400">Used</p>
+                              <p className="font-semibold text-gray-700">{totalUsed}</p>
+                            </div>
+                            <div className="text-center hidden sm:block">
+                              <p className="text-xs text-gray-400">Pending</p>
+                              <p className="font-semibold text-orange-500">{totalPending || '—'}</p>
+                            </div>
+                            <div className="text-center">
+                              <p className="text-xs text-gray-400">Remaining</p>
+                              <p className={`font-bold ${totalRemaining < 0 ? 'text-red-600' : totalRemaining === 0 && totalEntitled > 0 ? 'text-orange-500' : 'text-green-600'}`}>{totalRemaining}</p>
+                            </div>
+                            <svg className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                          </div>
+                        </button>
+
+                        {/* Per-leave-type breakdown */}
+                        {isExpanded && (
+                          <div className="border-t border-gray-100">
+                            <table className="w-full text-sm">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="th text-left pl-4">Leave Type</th>
+                                  <th className="th text-center">Entitled</th>
+                                  <th className="th text-center">Pending</th>
+                                  <th className="th text-center">Used</th>
+                                  <th className="th text-center">Remaining</th>
+                                  <th className="th"></th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50">
+                                {ALL_LEAVE_TYPES.map(lt => {
+                                  const b = userBalances?.get(lt);
+                                  const entitled = (b?.entitled as number) || 0;
+                                  const used = (b?.used as number) || 0;
+                                  const pending = (b?.pending as number) || 0;
+                                  const remaining = entitled - used - pending;
+                                  const hasRecord = !!b;
+                                  return (
+                                    <tr key={lt} className="hover:bg-gray-50/50">
+                                      <td className="td pl-4">
+                                        <span className={LEAVE_COLORS[lt] || 'badge-gray'}>{lt.replace(/_/g, ' ')}</span>
+                                      </td>
+                                      <td className="td text-center">{hasRecord ? entitled : <span className="text-gray-300">—</span>}</td>
+                                      <td className="td text-center">{hasRecord ? (pending > 0 ? <span className="text-orange-500 font-medium">{pending}</span> : '0') : <span className="text-gray-300">—</span>}</td>
+                                      <td className="td text-center">{hasRecord ? used : <span className="text-gray-300">—</span>}</td>
+                                      <td className="td text-center">
+                                        {hasRecord
+                                          ? <span className={remaining < 0 ? 'text-red-600 font-semibold' : remaining === 0 ? 'text-orange-500' : 'text-green-600 font-medium'}>{remaining}</span>
+                                          : <span className="text-gray-300">—</span>
+                                        }
+                                      </td>
+                                      <td className="td">
+                                        <div className="flex gap-1 justify-end">
+                                          {hasRecord ? (
+                                            <>
+                                              <button
+                                                onClick={() => openBalanceModal(uid, `${u.firstName} ${u.lastName}`, lt, entitled)}
+                                                className="btn-secondary btn-sm"
+                                              >Edit</button>
+                                              <button
+                                                onClick={() => { if (window.confirm('Delete this balance record?')) deleteBalanceMutation.mutate(b!.id as string); }}
+                                                className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50"
+                                              ><TrashIcon className="h-3.5 w-3.5" /></button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              onClick={() => openBalanceModal(uid, `${u.firstName} ${u.lastName}`, lt, 0)}
+                                              className="text-xs text-primary-600 hover:underline px-2 py-1"
+                                            >+ Set</button>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Holiday Management */}
