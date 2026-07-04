@@ -28,9 +28,9 @@ router.get('/export', async (req: AuthRequest, res: Response, next: NextFunction
     const orgId = req.user!.organizationId;
     const { format = 'json' } = req.query as { format?: string };
 
-    const [org, users, timesheets, projects, clients, expenses, invoices, departments, leaveRequests, attendance] = await Promise.all([
+    const [org, rawUsers, timesheets, projects, clients, expenses, invoices, departments, leaveRequests, attendance] = await Promise.all([
       prisma.organization.findUnique({ where: { id: orgId } }),
-      prisma.user.findMany({ where: { organizationId: orgId }, omit: { passwordHash: true, mfaSecret: true } as never }),
+      prisma.user.findMany({ where: { organizationId: orgId } }),
       prisma.timesheet.findMany({ where: { user: { organizationId: orgId } }, include: { entries: true } }),
       prisma.project.findMany({ where: { organizationId: orgId }, include: { tasks: true } }),
       prisma.client.findMany({ where: { organizationId: orgId } }),
@@ -41,6 +41,7 @@ router.get('/export', async (req: AuthRequest, res: Response, next: NextFunction
       prisma.attendance.findMany({ where: { userId: { in: (await prisma.user.findMany({ where: { organizationId: orgId }, select: { id: true } })).map(u => u.id) } } }),
     ]);
 
+    const users = rawUsers.map(({ passwordHash: _p, mfaSecret: _m, ...u }) => u);
     const backup = {
       exportedAt: new Date().toISOString(),
       version: '1.0',
@@ -118,14 +119,15 @@ router.post('/ftp', async (req: AuthRequest, res: Response, next: NextFunction) 
     const orgId = req.user!.organizationId;
 
     // Generate backup content
-    const [org, users, timesheets, projects, clients] = await Promise.all([
+    const [org, rawUsers, timesheets, projects, clients] = await Promise.all([
       prisma.organization.findUnique({ where: { id: orgId } }),
-      prisma.user.findMany({ where: { organizationId: orgId }, omit: { passwordHash: true, mfaSecret: true } as never }),
+      prisma.user.findMany({ where: { organizationId: orgId } }),
       prisma.timesheet.findMany({ where: { user: { organizationId: orgId } }, include: { entries: true } }),
       prisma.project.findMany({ where: { organizationId: orgId } }),
       prisma.client.findMany({ where: { organizationId: orgId } }),
     ]);
 
+    const users = rawUsers.map(({ passwordHash: _p, mfaSecret: _m, ...u }) => u);
     const content = JSON.stringify({ exportedAt: new Date().toISOString(), version: '1.0', organization: org, data: { users, timesheets, projects, clients } }, null, 2);
     const fileName = `backup-${orgId}-${new Date().toISOString().slice(0, 10)}.json`;
 
@@ -202,9 +204,9 @@ router.post('/cloud', async (req: AuthRequest, res: Response, next: NextFunction
     const fileName = `backup-${orgId}-${new Date().toISOString().slice(0, 10)}.json`;
 
     // Generate backup content
-    const [org, users, timesheets, projects, clients, expenses, invoices] = await Promise.all([
+    const [org, rawUsers, timesheets, projects, clients, expenses, invoices] = await Promise.all([
       prisma.organization.findUnique({ where: { id: orgId } }),
-      prisma.user.findMany({ where: { organizationId: orgId }, omit: { passwordHash: true, mfaSecret: true } as never }),
+      prisma.user.findMany({ where: { organizationId: orgId } }),
       prisma.timesheet.findMany({ where: { user: { organizationId: orgId } }, include: { entries: true } }),
       prisma.project.findMany({ where: { organizationId: orgId } }),
       prisma.client.findMany({ where: { organizationId: orgId } }),
@@ -212,6 +214,7 @@ router.post('/cloud', async (req: AuthRequest, res: Response, next: NextFunction
       prisma.invoice.findMany({ where: { organizationId: orgId }, include: { items: true } }),
     ]);
 
+    const users = rawUsers.map(({ passwordHash: _p, mfaSecret: _m, ...u }) => u);
     const content = JSON.stringify({ exportedAt: new Date().toISOString(), version: '1.0', organization: org, data: { users, timesheets, projects, clients, expenses, invoices } }, null, 2);
     const sizeBytes = Buffer.byteLength(content, 'utf8');
 
