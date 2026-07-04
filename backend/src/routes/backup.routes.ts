@@ -40,8 +40,7 @@ async function buildBackupContent(orgId: string): Promise<{ json: string; compre
     prisma.team.findMany({ where: { organizationId: orgId }, include: { members: true } }),
   ]);
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const users = rawUsers.map(({ passwordHash: _p, mfaSecret: _m, ...u }: { passwordHash: string; mfaSecret: string | null; [key: string]: unknown }) => u);
+  const users = rawUsers.map((u) => { const { passwordHash, mfaSecret, ...rest } = u; void passwordHash; void mfaSecret; return rest; });
 
   const backup = {
     exportedAt: new Date().toISOString(),
