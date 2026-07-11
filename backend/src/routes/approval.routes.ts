@@ -184,6 +184,12 @@ router.post('/:id/approve', async (req: AuthRequest, res: Response, next: NextFu
         data: { status: 'APPROVED', approvedAt: new Date() },
       });
 
+      // Mark all pending/submitted day submissions as approved too
+      await tx.daySubmission.updateMany({
+        where: { timesheetId: approval!.timesheetId, status: { in: ['SUBMITTED', 'PENDING'] } },
+        data: { status: 'APPROVED' },
+      });
+
       const user = approval!.timesheet.user;
       const period = `${format(approval!.timesheet.periodStart, 'MMM d')} - ${format(approval!.timesheet.periodEnd, 'MMM d, yyyy')}`;
 
@@ -303,6 +309,11 @@ router.post('/bulk-approve', async (req: AuthRequest, res: Response, next: NextF
           await tx.timesheet.update({
             where: { id: approval.timesheetId },
             data: { status: 'APPROVED', approvedAt: new Date() },
+          });
+
+          await tx.daySubmission.updateMany({
+            where: { timesheetId: approval.timesheetId, status: { in: ['SUBMITTED', 'PENDING'] } },
+            data: { status: 'APPROVED' },
           });
 
           await notificationQueue.add({

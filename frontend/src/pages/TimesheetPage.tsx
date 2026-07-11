@@ -487,7 +487,11 @@ export default function TimesheetPage() {
                       </button>
                     )}
                     {dayEditable && !isAdding && editingEntryId === null && (
-                      <button onClick={() => setAddingDay(dateKey)} className="btn-secondary btn-sm">
+                      <button
+                        onClick={() => setAddingDay(dateKey)}
+                        className="btn-secondary btn-sm"
+                        title={isDaySubmitted ? 'Adding an entry will withdraw this day\'s submission so you can re-submit' : undefined}
+                      >
                         <PlusIcon className="h-3.5 w-3.5" /> Add Entry
                       </button>
                     )}

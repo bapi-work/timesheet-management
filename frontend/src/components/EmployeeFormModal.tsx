@@ -91,9 +91,11 @@ export default function EmployeeFormModal({ onClose, employee }: EmployeeFormMod
 
   const updateMutation = useMutation({
     mutationFn: (data: EmployeeFormValues) => {
-      const payload = Object.fromEntries(
+      const payload: Record<string, unknown> = Object.fromEntries(
         Object.entries(data).filter(([, value]) => value !== '' && value !== undefined && value !== null)
       );
+      // Explicitly send null when department is cleared so backend removes the association
+      if (!data.departmentId) payload.departmentId = null;
       return api.put(`/users/${employee!.id}`, payload);
     },
     onSuccess: () => {
