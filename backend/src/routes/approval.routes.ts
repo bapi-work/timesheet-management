@@ -186,7 +186,7 @@ router.post('/:id/approve', async (req: AuthRequest, res: Response, next: NextFu
 
       // Mark all pending/submitted day submissions as approved too
       await tx.daySubmission.updateMany({
-        where: { timesheetId: approval!.timesheetId, status: { in: ['SUBMITTED', 'PENDING'] } },
+        where: { timesheetId: approval!.timesheetId, status: { in: ['SUBMITTED'] } },
         data: { status: 'APPROVED' },
       });
 
@@ -312,7 +312,7 @@ router.post('/bulk-approve', async (req: AuthRequest, res: Response, next: NextF
           });
 
           await tx.daySubmission.updateMany({
-            where: { timesheetId: approval.timesheetId, status: { in: ['SUBMITTED', 'PENDING'] } },
+            where: { timesheetId: approval.timesheetId, status: { in: ['SUBMITTED'] } },
             data: { status: 'APPROVED' },
           });
 
