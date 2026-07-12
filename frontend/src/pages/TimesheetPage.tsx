@@ -416,9 +416,11 @@ export default function TimesheetPage() {
             const dateKey = format(day, 'yyyy-MM-dd');
             const isAdding = addingDay === dateKey;
             const daySub = getDaySubmission(day);
-            const isDayApproved  = daySub?.status === 'APPROVED';
-            const isDaySubmitted = daySub?.status === 'SUBMITTED';
-            const isDayRejected  = daySub?.status === 'REJECTED';
+            // When the whole timesheet is approved/locked, treat all submitted days as approved
+            const effectiveDayStatus = timesheetLocked && daySub?.status === 'SUBMITTED' ? 'APPROVED' : daySub?.status;
+            const isDayApproved  = effectiveDayStatus === 'APPROVED';
+            const isDaySubmitted = effectiveDayStatus === 'SUBMITTED';
+            const isDayRejected  = effectiveDayStatus === 'REJECTED';
             const leaveInfo      = approvedLeaveDays.get(dateKey);
             const isLeaveDay     = !!leaveInfo;
             const isHalfDay      = leaveInfo?.dayType === 'HALF_DAY';
@@ -454,9 +456,9 @@ export default function TimesheetPage() {
                       </span>
                     )}
                     {/* Day status badge */}
-                    {daySub && (
-                      <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium', DAY_STATUS_CONFIG[daySub.status]?.cls)}>
-                        {DAY_STATUS_CONFIG[daySub.status]?.label}
+                    {daySub && effectiveDayStatus && (
+                      <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium', DAY_STATUS_CONFIG[effectiveDayStatus]?.cls)}>
+                        {DAY_STATUS_CONFIG[effectiveDayStatus]?.label}
                       </span>
                     )}
                     {isDayRejected && daySub?.comments && (
@@ -476,7 +478,7 @@ export default function TimesheetPage() {
                         {isDayRejected ? 'Resubmit' : 'Submit Day'}
                       </button>
                     )}
-                    {isDaySubmitted && (
+                    {isDaySubmitted && !timesheetLocked && (
                       <button
                         onClick={() => withdrawDay.mutate(dateKey)}
                         disabled={withdrawDay.isPending}
@@ -490,7 +492,6 @@ export default function TimesheetPage() {
                       <button
                         onClick={() => setAddingDay(dateKey)}
                         className="btn-secondary btn-sm"
-                        title={isDaySubmitted ? 'Adding an entry will withdraw this day\'s submission so you can re-submit' : undefined}
                       >
                         <PlusIcon className="h-3.5 w-3.5" /> Add Entry
                       </button>
