@@ -170,7 +170,7 @@ export default function TimesheetPage() {
   leaveRequests
     .filter(l => l.status === 'APPROVED')
     .forEach(l => {
-      eachDay({ start: new Date(l.startDate), end: new Date(l.endDate) })
+      eachDay({ start: parseISO(l.startDate.slice(0, 10)), end: parseISO(l.endDate.slice(0, 10)) })
         .forEach(d => approvedLeaveDays.set(format(d, 'yyyy-MM-dd'), { leaveType: l.leaveType, dayType: l.dayType || 'FULL_DAY' }));
     });
 
@@ -469,7 +469,13 @@ export default function TimesheetPage() {
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {dayEditable && !isDaySubmitted && entries.length > 0 && (
                       <button
-                        onClick={() => submitDay.mutate(dateKey)}
+                        onClick={async () => {
+                          const ok = await confirm(
+                            `Submit ${format(day, 'EEEE, MMM d')} for approval? You can withdraw it later if needed.`,
+                            { confirmLabel: 'Submit Day' }
+                          );
+                          if (ok) submitDay.mutate(dateKey);
+                        }}
                         disabled={submitDay.isPending}
                         className="btn-primary btn-sm"
                         title="Submit this day for approval"

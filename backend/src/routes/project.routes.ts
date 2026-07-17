@@ -47,7 +47,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
         take: Number(limit),
         include: {
           client: { select: { id: true, name: true } },
-          tasks: { where: { isActive: true }, select: { id: true, name: true } },
+          tasks: { where: { isActive: true }, select: { id: true, name: true, isBillable: true } },
           _count: { select: { members: true, entries: true } },
         },
         orderBy: { name: 'asc' },
