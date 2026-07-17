@@ -139,13 +139,31 @@ model Organization {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  departments Department[]
-  users       User[]
-  holidays    Holiday[]
-  projects    Project[]
-  clients     Client[]
-  invoices    Invoice[]
-  teams       Team[]
+  departments      Department[]
+  users            User[]
+  holidays         Holiday[]
+  projects         Project[]
+  clients          Client[]
+  invoices         Invoice[]
+  teams            Team[]
+  workCategories   WorkCategory[]
+}
+
+// ─── Work Categories ──────────────────────────────────────────────────────────
+
+model WorkCategory {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
 }
 
 model Department {

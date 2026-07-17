@@ -733,6 +733,20 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
 });
 
 
+// Work categories — accessible by all authenticated users
+router.get('/work-categories', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const categories = await prisma.workCategory.findMany({
+      where: { organizationId: req.user!.organizationId, isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true },
+    });
+    res.json(categories);
+  } catch (err) {
+    next(err);
+  }
+});
+
 async function recalcTotals(tx: Prisma.TransactionClient | typeof prisma, timesheetId: string): Promise<void> {
   const entries = await tx.timesheetEntry.findMany({ where: { timesheetId } });
   const totalHours = entries.reduce((s, e) => s + e.hours, 0);

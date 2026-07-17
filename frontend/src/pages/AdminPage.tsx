@@ -7,12 +7,13 @@ import api from '../lib/api';
 import toast from 'react-hot-toast';
 import {
   PlusIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, UserPlusIcon,
-  SwatchIcon, PhotoIcon, InformationCircleIcon,
+  SwatchIcon, PhotoIcon, InformationCircleIcon, TrashIcon, PencilIcon,
+  CheckIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useBranding } from '../context/BrandingContext';
 import EmployeeFormModal from '../components/EmployeeFormModal';
 
-type Tab = 'org' | 'branding' | 'employees' | 'holidays' | 'audit';
+type Tab = 'org' | 'branding' | 'employees' | 'holidays' | 'categories' | 'audit';
 
 interface BrandingForm {
   appName: string;
@@ -51,7 +52,7 @@ export default function AdminPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'org' || tabParam === 'branding' || tabParam === 'employees' || tabParam === 'holidays' || tabParam === 'audit') {
+    if (tabParam === 'org' || tabParam === 'branding' || tabParam === 'employees' || tabParam === 'holidays' || tabParam === 'categories' || tabParam === 'audit') {
       return tabParam;
     }
     return 'org';
@@ -112,6 +113,51 @@ export default function AdminPage() {
     onSuccess: () => { toast.success('Removed'); qc.invalidateQueries({ queryKey: ['admin', 'holidays'] }); },
   });
 
+  // Work Categories
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+
+  const { data: categories = [] } = useQuery<{ id: string; name: string; isActive: boolean; sortOrder: number }[]>({
+    queryKey: ['admin', 'work-categories'],
+    queryFn: () => api.get('/admin/work-categories').then(r => r.data),
+    enabled: tab === 'categories',
+  });
+
+  const createCategoryMutation = useMutation({
+    mutationFn: (name: string) => api.post('/admin/work-categories', { name }),
+    onSuccess: () => {
+      toast.success('Category added');
+      setNewCategoryName('');
+      qc.invalidateQueries({ queryKey: ['admin', 'work-categories'] });
+      qc.invalidateQueries({ queryKey: ['work-categories'] });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast.error(e.response?.data?.message || 'Failed to add category'),
+  });
+
+  const updateCategoryMutation = useMutation({
+    mutationFn: ({ id, ...data }: { id: string; name?: string; isActive?: boolean }) =>
+      api.put(`/admin/work-categories/${id}`, data),
+    onSuccess: () => {
+      toast.success('Category updated');
+      setEditingCategoryId(null);
+      qc.invalidateQueries({ queryKey: ['admin', 'work-categories'] });
+      qc.invalidateQueries({ queryKey: ['work-categories'] });
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast.error(e.response?.data?.message || 'Failed to update category'),
+  });
+
+  const deleteCategoryMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/admin/work-categories/${id}`),
+    onSuccess: () => {
+      toast.success('Category deleted');
+      qc.invalidateQueries({ queryKey: ['admin', 'work-categories'] });
+      qc.invalidateQueries({ queryKey: ['work-categories'] });
+    },
+  });
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
     const fd = new FormData(); fd.append('file', file);
@@ -125,6 +171,7 @@ export default function AdminPage() {
     { key: 'branding', label: 'Branding' },
     { key: 'employees', label: 'Employees' },
     { key: 'holidays', label: 'Holidays' },
+    { key: 'categories', label: 'Work Categories' },
     { key: 'audit', label: 'Audit Logs' },
   ];
 
@@ -344,6 +391,98 @@ export default function AdminPage() {
                 <p className="px-4 py-6 text-sm text-gray-400 text-center">No holidays added yet</p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Work Categories */}
+      {tab === 'categories' && (
+        <div className="space-y-4 max-w-lg">
+          <div className="card space-y-4">
+            <div>
+              <h3 className="font-semibold text-gray-900">Work Categories</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                These categories appear in the timesheet entry form. Employees must select one per entry.
+                Deactivating a category hides it from new entries but preserves existing data.
+              </p>
+            </div>
+
+            {/* Add new */}
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                if (newCategoryName.trim()) createCategoryMutation.mutate(newCategoryName.trim());
+              }}
+              className="flex gap-2"
+            >
+              <input
+                value={newCategoryName}
+                onChange={e => setNewCategoryName(e.target.value)}
+                className="input flex-1"
+                placeholder="New category name…"
+              />
+              <button type="submit" disabled={!newCategoryName.trim() || createCategoryMutation.isPending} className="btn-primary flex items-center gap-1">
+                <PlusIcon className="h-4 w-4" /> Add
+              </button>
+            </form>
+
+            {/* List */}
+            <ul className="divide-y divide-gray-100">
+              {categories.map(cat => (
+                <li key={cat.id} className="flex items-center gap-3 py-2.5">
+                  {editingCategoryId === cat.id ? (
+                    <>
+                      <input
+                        value={editingCategoryName}
+                        onChange={e => setEditingCategoryName(e.target.value)}
+                        className="input flex-1 text-sm"
+                        autoFocus
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') updateCategoryMutation.mutate({ id: cat.id, name: editingCategoryName });
+                          if (e.key === 'Escape') setEditingCategoryId(null);
+                        }}
+                      />
+                      <button onClick={() => updateCategoryMutation.mutate({ id: cat.id, name: editingCategoryName })} className="p-1 text-green-600 hover:text-green-700">
+                        <CheckIcon className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => setEditingCategoryId(null)} className="p-1 text-gray-400 hover:text-gray-600">
+                        <XMarkIcon className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className={`flex-1 text-sm ${cat.isActive ? 'text-gray-900' : 'text-gray-400 line-through'}`}>
+                        {cat.name}
+                      </span>
+                      <button
+                        onClick={() => updateCategoryMutation.mutate({ id: cat.id, isActive: !cat.isActive })}
+                        title={cat.isActive ? 'Deactivate' : 'Activate'}
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium border ${cat.isActive ? 'text-green-700 bg-green-50 border-green-200 hover:bg-green-100' : 'text-gray-500 bg-gray-50 border-gray-200 hover:bg-gray-100'}`}
+                      >
+                        {cat.isActive ? 'Active' : 'Inactive'}
+                      </button>
+                      <button
+                        onClick={() => { setEditingCategoryId(cat.id); setEditingCategoryName(cat.name); }}
+                        className="p-1 text-gray-400 hover:text-primary-600"
+                        title="Rename"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => { if (confirm(`Delete "${cat.name}"?`)) deleteCategoryMutation.mutate(cat.id); }}
+                        className="p-1 text-gray-400 hover:text-red-600"
+                        title="Delete"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+              {categories.length === 0 && (
+                <li className="py-4 text-center text-sm text-gray-400">No categories yet. Add one above.</li>
+              )}
+            </ul>
           </div>
         </div>
       )}

@@ -219,4 +219,76 @@ router.delete('/holidays/:id', async (req: AuthRequest, res: Response, next: Nex
   }
 });
 
+// ─── Work Categories ──────────────────────────────────────────────────────────
+
+router.get('/work-categories', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const categories = await prisma.workCategory.findMany({
+      where: { organizationId: req.user!.organizationId },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    res.json(categories);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/work-categories', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) throw new AppError('Name is required', 400);
+    const maxOrder = await prisma.workCategory.aggregate({
+      where: { organizationId: req.user!.organizationId },
+      _max: { sortOrder: true },
+    });
+    const category = await prisma.workCategory.create({
+      data: {
+        organizationId: req.user!.organizationId,
+        name: name.trim(),
+        sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
+      },
+    });
+    res.status(201).json(category);
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === 'P2002') return next(new AppError('A category with that name already exists', 409));
+    next(err);
+  }
+});
+
+router.put('/work-categories/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, isActive, sortOrder } = req.body;
+    const existing = await prisma.workCategory.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
+    if (!existing) throw new AppError('Not found', 404);
+    const category = await prisma.workCategory.update({
+      where: { id: req.params.id },
+      data: {
+        ...(name !== undefined && { name: name.trim() }),
+        ...(isActive !== undefined && { isActive }),
+        ...(sortOrder !== undefined && { sortOrder }),
+        updatedAt: new Date(),
+      },
+    });
+    res.json(category);
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === 'P2002') return next(new AppError('A category with that name already exists', 409));
+    next(err);
+  }
+});
+
+router.delete('/work-categories/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const existing = await prisma.workCategory.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
+    if (!existing) throw new AppError('Not found', 404);
+    await prisma.workCategory.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

@@ -14,14 +14,10 @@ import {
 import clsx from 'clsx';
 import GridTimesheetView from '../components/GridTimesheetView';
 
-const ENTRY_CATEGORIES = [
-  'Deliverables',
-  'Project Management',
-  'Software Development',
-  'Self Development',
-  'Project Support',
-  'Project Implementation',
-  'Other',
+// Fallback list used while API loads or if org has no categories yet
+const DEFAULT_CATEGORIES = [
+  'Deliverables', 'Project Management', 'Software Development',
+  'Self Development', 'Project Support', 'Project Implementation', 'Other',
 ];
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
@@ -149,6 +145,13 @@ export default function TimesheetPage() {
     queryKey: ['projects'],
     queryFn: () => api.get('/projects?limit=100').then(r => r.data.projects),
   });
+
+  const { data: workCategories } = useQuery({
+    queryKey: ['work-categories'],
+    queryFn: () => api.get('/timesheets/work-categories').then(r => r.data as { id: string; name: string }[]),
+    staleTime: 5 * 60 * 1000,
+  });
+  const entryCategories = workCategories?.map(c => c.name) ?? DEFAULT_CATEGORIES;
 
   // Fetch approved leave for leave-day indicators
   const { data: leaveData } = useQuery({
@@ -648,7 +651,7 @@ function EditEntryForm({
           <label className="label">Category *</label>
           <select {...register('category', { required: 'Category is required' })} className={`input ${errors.category ? 'input-error' : ''}`}>
             <option value="">Select category…</option>
-            {ENTRY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {entryCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {errors.category && <p className="text-xs text-red-500 mt-0.5">{errors.category.message}</p>}
         </div>
@@ -762,7 +765,7 @@ function AddEntryForm({ timesheetId, date, projects, onDone, onCancel }: {
           <label className="label">Category *</label>
           <select {...register('category', { required: 'Category is required' })} className={`input ${errors.category ? 'input-error' : ''}`}>
             <option value="">Select category…</option>
-            {ENTRY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {entryCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {errors.category && <p className="text-xs text-red-500 mt-0.5">{errors.category.message as string}</p>}
         </div>

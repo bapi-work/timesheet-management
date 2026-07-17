@@ -51,7 +51,7 @@ interface Timesheet {
   entries: TimesheetEntry[];
 }
 
-const ENTRY_CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   'Deliverables', 'Project Management', 'Software Development',
   'Self Development', 'Project Support', 'Project Implementation', 'Other',
 ];
@@ -122,6 +122,12 @@ interface Props {
 
 export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
   const qc = useQueryClient();
+  const { data: workCategories } = useQuery({
+    queryKey: ['work-categories'],
+    queryFn: () => api.get('/timesheets/work-categories').then(r => r.data as { id: string; name: string }[]),
+    staleTime: 5 * 60 * 1000,
+  });
+  const entryCategories = workCategories?.map(c => c.name) ?? DEFAULT_CATEGORIES;
   const [monthDate, setMonthDate] = useState(() => startOfMonth(new Date()));
   const [rows, setRows] = useState<GridRow[]>([emptyRow()]);
   const [saving, setSaving] = useState<Set<string>>(new Set());
@@ -359,7 +365,7 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
                       className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                     >
                       <option value="">Select…</option>
-                      {ENTRY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      {entryCategories.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </td>
 
