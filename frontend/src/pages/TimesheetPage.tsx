@@ -518,6 +518,7 @@ export default function TimesheetPage() {
                       <EditEntryForm
                         entry={entry}
                         projects={projects || []}
+                        categories={entryCategories}
                         onSave={(data) => updateEntry.mutate({ entryId: entry.id as string, data })}
                         onCancel={() => setEditingEntryId(null)}
                         isLoading={updateEntry.isPending}
@@ -573,6 +574,7 @@ export default function TimesheetPage() {
                       timesheetId={timesheet.id}
                       date={dateKey}
                       projects={projects || []}
+                      categories={entryCategories}
                       onDone={() => { setAddingDay(null); invalidate(); }}
                       onCancel={() => setAddingDay(null)}
                     />
@@ -606,10 +608,11 @@ export default function TimesheetPage() {
 
 /* ─── Edit Entry Form ─────────────────────────────────────────────────────── */
 function EditEntryForm({
-  entry, projects, onSave, onCancel, isLoading,
+  entry, projects, categories, onSave, onCancel, isLoading,
 }: {
   entry: Record<string, unknown>;
   projects: Project[];
+  categories: string[];
   onSave: (data: Partial<EntryFormValues>) => void;
   onCancel: () => void;
   isLoading: boolean;
@@ -651,7 +654,7 @@ function EditEntryForm({
           <label className="label">Category *</label>
           <select {...register('category', { required: 'Category is required' })} className={`input ${errors.category ? 'input-error' : ''}`}>
             <option value="">Select category…</option>
-            {entryCategories.map(c => <option key={c} value={c}>{c}</option>)}
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {errors.category && <p className="text-xs text-red-500 mt-0.5">{errors.category.message}</p>}
         </div>
@@ -716,8 +719,8 @@ function EditEntryForm({
 }
 
 /* ─── Add Entry Form ──────────────────────────────────────────────────────── */
-function AddEntryForm({ timesheetId, date, projects, onDone, onCancel }: {
-  timesheetId: string; date: string; projects: Project[];
+function AddEntryForm({ timesheetId, date, projects, categories, onDone, onCancel }: {
+  timesheetId: string; date: string; projects: Project[]; categories: string[];
   onDone: () => void; onCancel: () => void;
 }) {
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<EntryFormValues>({
@@ -765,7 +768,7 @@ function AddEntryForm({ timesheetId, date, projects, onDone, onCancel }: {
           <label className="label">Category *</label>
           <select {...register('category', { required: 'Category is required' })} className={`input ${errors.category ? 'input-error' : ''}`}>
             <option value="">Select category…</option>
-            {entryCategories.map(c => <option key={c} value={c}>{c}</option>)}
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {errors.category && <p className="text-xs text-red-500 mt-0.5">{errors.category.message as string}</p>}
         </div>
