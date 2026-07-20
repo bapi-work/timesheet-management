@@ -511,10 +511,8 @@ npx prisma migrate deploy
 npx prisma studio
 npx prisma db seed
 
-# Testing
-npm test
-npm run build
-npm run lint
+# Build
+npm run build   # run inside backend/ and frontend/
 
 # Health Check
 curl http://localhost:4000/api/health

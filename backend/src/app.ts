@@ -30,6 +30,7 @@ import expenseRoutes from './routes/expense.routes';
 import backupRoutes from './routes/backup.routes';
 import teamRoutes from './routes/team.routes';
 import prisma from './utils/prisma';
+import { register, httpMetricsMiddleware, startDbPoolMetricsPolling } from './utils/metrics';
 
 const app = express();
 
@@ -48,6 +49,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan('combined'));
 app.use(requestLogger);
+app.use(httpMetricsMiddleware);
 
 // Serve uploaded files (receipts, leave docs, avatars) at /uploads/*
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
@@ -98,6 +100,13 @@ app.get('/api/public/branding', async (_req, res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date() }));
+
+// Prometheus scrape endpoint (see deployment/kubernetes/monitoring.yaml)
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+startDbPoolMetricsPolling();
 
 app.use(errorHandler);
 

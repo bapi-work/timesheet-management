@@ -49,16 +49,6 @@ spec:
             configMapKeyRef:
               name: timesheet-config
               key: FRONTEND_URL
-        - name: VITE_API_URL
-          valueFrom:
-            configMapKeyRef:
-              name: timesheet-config
-              key: VITE_API_URL
-        - name: VITE_WS_URL
-          valueFrom:
-            configMapKeyRef:
-              name: timesheet-config
-              key: VITE_WS_URL
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
