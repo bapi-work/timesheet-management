@@ -223,8 +223,8 @@ router.post('/:id/entries', async (req: AuthRequest, res: Response, next: NextFu
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet) throw new AppError('Timesheet not found', 404);
     if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (['APPROVED', 'LOCKED'].includes(timesheet.status)) {
-      throw new AppError('Cannot edit an approved or locked timesheet', 400);
+    if (timesheet.status === 'LOCKED') {
+      throw new AppError('Cannot edit a locked timesheet', 400);
     }
 
     const entries = Array.isArray(req.body) ? req.body : [req.body];
@@ -282,7 +282,7 @@ router.put('/:id/entries/:entryId', async (req: AuthRequest, res: Response, next
   try {
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet || timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 404);
-    if (['SUBMITTED', 'APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot edit', 400);
+    if (timesheet.status === 'LOCKED') throw new AppError('Cannot edit', 400);
 
     const data = entrySchema.partial().parse(req.body);
     const entry = await prisma.$transaction(async (tx) => {
@@ -308,7 +308,7 @@ router.delete('/:id/entries/:entryId', async (req: AuthRequest, res: Response, n
   try {
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet || timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (['APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot edit', 400);
+    if (timesheet.status === 'LOCKED') throw new AppError('Cannot edit', 400);
 
     await prisma.$transaction(async (tx) => {
       // findFirst with timesheetId scope prevents cross-timesheet entry deletion
@@ -504,7 +504,7 @@ router.post('/:id/days/:date/submit', async (req: AuthRequest, res: Response, ne
     });
     if (!timesheet) throw new AppError('Timesheet not found', 404);
     if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (['APPROVED', 'LOCKED'].includes(timesheet.status)) throw new AppError('Cannot modify an approved or locked timesheet', 400);
+    if (timesheet.status === 'LOCKED') throw new AppError('Cannot modify a locked timesheet', 400);
 
     const date = startOfDay(parseISO(req.params.date));
 
@@ -705,8 +705,8 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
           timesheet = await tx.timesheet.create({
             data: { userId: req.user!.userId, periodStart: weekData.periodStart, periodEnd: weekData.periodEnd },
           });
-        } else if (['SUBMITTED', 'APPROVED', 'LOCKED'].includes(timesheet.status)) {
-          errors.push(`Week of ${format(weekData.periodStart, 'MMM d')}: Timesheet is ${timesheet.status} and cannot be modified`);
+        } else if (timesheet.status === 'LOCKED') {
+          errors.push(`Week of ${format(weekData.periodStart, 'MMM d')}: Timesheet is locked and cannot be modified`);
           continue;
         }
 

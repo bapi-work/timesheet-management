@@ -247,7 +247,7 @@ export default function TimesheetPage() {
     start: parseISO(timesheet.periodStart.slice(0, 10)),
     end: parseISO(timesheet.periodEnd.slice(0, 10)),
   });
-  const timesheetLocked = ['APPROVED', 'LOCKED'].includes(timesheet.status);
+  const timesheetLocked = timesheet.status === 'LOCKED';
 
   const daySubmissions: DaySubmission[] = timesheet.daySubmissions || [];
   const displayStatus = deriveDisplayStatus(timesheet.status, daySubmissions);
@@ -432,7 +432,7 @@ export default function TimesheetPage() {
             // blocks days that were actually part of that approval (i.e. had a day submission) —
             // a day with no submission at all must stay editable regardless of the week's status.
             const payrollLocked = timesheet.status === 'LOCKED';
-            const dayEditable = !payrollLocked && !isDayApproved && !(timesheet.status === 'APPROVED' && !!daySub);
+            const dayEditable = !payrollLocked;
 
             return (
               <div
