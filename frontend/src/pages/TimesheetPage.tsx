@@ -509,7 +509,7 @@ export default function TimesheetPage() {
                         <PlusIcon className="h-3.5 w-3.5" /> Add Entry
                       </button>
                     )}
-                    {isDayApproved && (
+                    {isDayApproved && timesheetLocked && (
                       <LockClosedIcon className="h-4 w-4 text-green-500" title="Day approved — locked" />
                     )}
                   </div>

@@ -515,7 +515,6 @@ router.post('/:id/days/:date/submit', async (req: AuthRequest, res: Response, ne
 
     let daySubmission;
     if (existing) {
-      if (existing.status === 'APPROVED') throw new AppError('This day has already been approved', 400);
       daySubmission = await prisma.daySubmission.update({
         where: { id: existing.id },
         data: { status: 'SUBMITTED', submittedAt: new Date(), reviewedAt: null, reviewedById: null, comments: null },
