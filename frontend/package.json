@@ -1,6 +1,6 @@
 {
   "name": "timesheet-frontend",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "type": "module",
   "scripts": {
     "dev": "vite",
