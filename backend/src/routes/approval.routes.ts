@@ -472,9 +472,18 @@ router.post('/day-submissions/:id/approve', async (req: AuthRequest, res: Respon
         where: { id: req.params.id },
         data: { status: 'APPROVED', reviewedAt: new Date(), reviewedById: userId, comments: req.body.comments },
       });
-      // Update parent timesheet status based on all day submissions
-      const allDaySubs = await tx.daySubmission.findMany({ where: { timesheetId: sub.timesheetId } });
-      const allApproved = allDaySubs.length > 0 && allDaySubs.every(s => s.id === req.params.id ? true : s.status === 'APPROVED');
+      // Update parent timesheet status based on all day submissions.
+      // "Fully approved" means every day that actually has logged entries has an
+      // APPROVED day submission — not merely every day submission that happens to exist,
+      // since a lone day submission can otherwise look "complete" on its own.
+      const [allDaySubs, entryDates] = await Promise.all([
+        tx.daySubmission.findMany({ where: { timesheetId: sub.timesheetId } }),
+        tx.timesheetEntry.findMany({ where: { timesheetId: sub.timesheetId }, select: { date: true }, distinct: ['date'] }),
+      ]);
+      const approvedDates = new Set(
+        allDaySubs.filter(s => (s.id === req.params.id ? true : s.status === 'APPROVED')).map(s => s.date.toDateString())
+      );
+      const allApproved = entryDates.length > 0 && entryDates.every(e => approvedDates.has(e.date.toDateString()));
       const anySubmitted = allDaySubs.some(s => s.id !== req.params.id && s.status === 'SUBMITTED');
       if (allApproved) {
         await tx.timesheet.update({ where: { id: sub.timesheetId }, data: { status: 'APPROVED', approvedAt: new Date() } });

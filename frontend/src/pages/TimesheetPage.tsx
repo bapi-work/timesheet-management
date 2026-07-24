@@ -428,7 +428,11 @@ export default function TimesheetPage() {
             const isLeaveDay     = !!leaveInfo;
             const isHalfDay      = leaveInfo?.dayType === 'HALF_DAY';
 
-            const dayEditable = !timesheetLocked && !isDayApproved;
+            // A payroll LOCKED period always blocks every day. An APPROVED week status only
+            // blocks days that were actually part of that approval (i.e. had a day submission) —
+            // a day with no submission at all must stay editable regardless of the week's status.
+            const payrollLocked = timesheet.status === 'LOCKED';
+            const dayEditable = !payrollLocked && !isDayApproved && !(timesheet.status === 'APPROVED' && !!daySub);
 
             return (
               <div
