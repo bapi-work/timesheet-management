@@ -31,30 +31,76 @@ const entrySchema = z.object({
 
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { userId, status, from, to, startDate, endDate, page = '1', limit = '20' } = req.query;
+    const { userId, status, from, to, startDate, endDate, page = '1', limit = '20', teamId, departmentId } = req.query;
     const fromDate = (from || startDate) as string | undefined;
     const toDate = (to || endDate) as string | undefined;
     const skip = (Number(page) - 1) * Number(limit);
+    const orgId = req.user!.organizationId;
 
     const isAdmin = ['SYSTEM_ADMIN', 'HR_ADMIN'].includes(req.user!.role);
     const isManager = ['DEPARTMENT_MANAGER', 'PROJECT_MANAGER', 'TEAM_LEAD'].includes(req.user!.role);
 
     const where: Record<string, unknown> = {};
-    if (isAdmin) {
-      // Admins see all org users; optionally filter by a specific userId
-      if (userId) {
-        where.userId = userId as string;
-      } else {
-        where.user = { organizationId: req.user!.organizationId };
-      }
-    } else if (isManager) {
-      // Managers see all org timesheets; optionally filter by a specific userId
-      if (userId) {
-        where.userId = userId as string;
-      }
-      where.user = { organizationId: req.user!.organizationId };
-    } else {
+
+    if (!isAdmin && !isManager) {
       where.userId = req.user!.userId;
+    } else {
+      // Build the set of user IDs this viewer is allowed to see
+      let allowedIds: Set<string> | null = isAdmin ? null : new Set<string>();
+
+      if (isManager) {
+        // Direct reports
+        const directReports = await prisma.user.findMany({
+          where: { organizationId: orgId, managerId: req.user!.userId, isActive: true },
+          select: { id: true },
+        });
+        directReports.forEach(u => allowedIds!.add(u.id));
+
+        // Members of teams this user leads
+        const ledMembers = await prisma.teamMember.findMany({
+          where: { team: { leadId: req.user!.userId } },
+          select: { userId: true },
+        });
+        ledMembers.forEach(m => allowedIds!.add(m.userId));
+      }
+
+      // Intersect with teamId filter if provided
+      if (teamId) {
+        const teamMembers = await prisma.teamMember.findMany({
+          where: { teamId: teamId as string },
+          select: { userId: true },
+        });
+        const teamUids = teamMembers.map(m => m.userId);
+        allowedIds = allowedIds
+          ? new Set(teamUids.filter(id => allowedIds!.has(id)))
+          : new Set(teamUids);
+      }
+
+      // Intersect with departmentId filter if provided
+      if (departmentId) {
+        const deptUsers = await prisma.user.findMany({
+          where: { organizationId: orgId, departmentId: departmentId as string },
+          select: { id: true },
+        });
+        const deptUids = deptUsers.map(u => u.id);
+        allowedIds = allowedIds
+          ? new Set(deptUids.filter(id => allowedIds!.has(id)))
+          : new Set(deptUids);
+      }
+
+      // Apply specific userId filter (only if within allowed set)
+      if (userId) {
+        const uid = userId as string;
+        if (!allowedIds || allowedIds.has(uid)) {
+          where.userId = uid;
+        } else {
+          where.userId = { in: [] };
+        }
+      } else if (allowedIds) {
+        where.userId = { in: [...allowedIds] };
+      } else {
+        where.user = { organizationId: orgId };
+      }
     }
     if (status) {
       where.status = status;
@@ -576,7 +622,6 @@ router.post('/:id/days/:date/withdraw', async (req: AuthRequest, res: Response, 
       where: { timesheetId_date: { timesheetId: req.params.id, date } },
     });
     if (!existing) throw new AppError('No submission found for this day', 404);
-    if (existing.status === 'APPROVED') throw new AppError('Cannot withdraw an approved day', 400);
 
     const updated = await prisma.daySubmission.update({
       where: { id: existing.id },
@@ -612,7 +657,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
 
     const projects = await prisma.project.findMany({
       where: { organizationId: req.user!.organizationId },
-      select: { id: true, code: true, name: true, tasks: { select: { id: true, name: true } } },
+      select: { id: true, code: true, name: true, billable: true, tasks: { select: { id: true, name: true, isBillable: true } } },
     });
 
     const errors: string[] = [];
@@ -651,16 +696,31 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
 
       // Match task by name within the project (optional)
       let taskId: string | undefined;
+      let taskBillable: boolean | undefined;
       const taskRaw = String(row['taskname'] || row['task'] || '').trim();
       if (taskRaw && projectId) {
-        const proj = projects.find(p => p.id === projectId) as typeof projects[0] & { tasks?: { id: string; name: string }[] };
+        const proj = projects.find(p => p.id === projectId);
         const tasks = proj?.tasks || [];
         const foundTask = tasks.find(t => t.name.toLowerCase() === taskRaw.toLowerCase());
-        if (foundTask) taskId = foundTask.id;
+        if (foundTask) {
+          taskId = foundTask.id;
+          taskBillable = (foundTask as { id: string; name: string; isBillable?: boolean }).isBillable;
+        } else {
+          errors.push(`Row ${rowNum}: Task "${taskRaw}" not found in project — entry imported without task`);
+        }
       }
 
-      const billableRaw = String(row['billable'] || 'Y').trim().toUpperCase();
-      const isBillable = billableRaw === 'Y' || billableRaw === 'YES' || billableRaw === 'TRUE' || billableRaw === '1';
+      // Billable: task overrides project overrides explicit column value; column defaults to project setting
+      const proj = projectId ? projects.find(p => p.id === projectId) : undefined;
+      const billableRaw = String(row['billable'] ?? '').trim().toUpperCase();
+      const explicitBillable = billableRaw !== ''
+        ? billableRaw === 'Y' || billableRaw === 'YES' || billableRaw === 'TRUE' || billableRaw === '1'
+        : undefined;
+      const isBillable = taskBillable !== undefined
+        ? taskBillable
+        : explicitBillable !== undefined
+          ? explicitBillable
+          : (proj as { billable?: boolean } | undefined)?.billable ?? true;
 
       const entryTypeRaw = String(row['entrytype'] || 'REGULAR').trim().toUpperCase();
       const validTypes = ['REGULAR', 'OVERTIME', 'COMP_OFF', 'ON_CALL'];

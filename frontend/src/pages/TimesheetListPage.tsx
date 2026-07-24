@@ -51,6 +51,8 @@ export default function TimesheetListPage() {
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [userFilter, setUserFilter] = useState('');
+  const [teamFilter, setTeamFilter] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
   const [showUpload, setShowUpload] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -59,15 +61,29 @@ export default function TimesheetListPage() {
   const params = new URLSearchParams({ page: String(page), limit: '15' });
   if (status) params.set('status', status);
   if (isManager && userFilter) params.set('userId', userFilter);
+  if (isManager && teamFilter) params.set('teamId', teamFilter);
+  if (isManager && departmentFilter) params.set('departmentId', departmentFilter);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['timesheets', page, status, userFilter],
+    queryKey: ['timesheets', page, status, userFilter, teamFilter, departmentFilter],
     queryFn: () => api.get(`/timesheets?${params}`).then(r => r.data),
   });
 
   const { data: usersData } = useQuery({
     queryKey: ['users-list'],
     queryFn: () => api.get('/users?limit=200').then(r => r.data),
+    enabled: isManager,
+  });
+
+  const { data: teamsData } = useQuery({
+    queryKey: ['teams-list'],
+    queryFn: () => api.get('/teams?limit=100').then(r => r.data),
+    enabled: isManager,
+  });
+
+  const { data: departmentsData } = useQuery({
+    queryKey: ['departments-list'],
+    queryFn: () => api.get('/departments?limit=100').then(r => r.data),
     enabled: isManager,
   });
 
@@ -225,18 +241,40 @@ export default function TimesheetListPage() {
         ))}
 
         {isManager && (
-          <select
-            value={userFilter}
-            onChange={e => { setUserFilter(e.target.value); setPage(1); }}
-            className="ml-auto border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="">All Employees</option>
-            {(usersData?.users || []).map((u: Record<string, unknown>) => (
-              <option key={u.id as string} value={u.id as string}>
-                {u.firstName as string} {u.lastName as string}
-              </option>
-            ))}
-          </select>
+          <div className="ml-auto flex gap-2 flex-wrap">
+            <select
+              value={departmentFilter}
+              onChange={e => { setDepartmentFilter(e.target.value); setUserFilter(''); setTeamFilter(''); setPage(1); }}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">All Departments</option>
+              {(Array.isArray(departmentsData) ? departmentsData : []).map((d: Record<string, unknown>) => (
+                <option key={d.id as string} value={d.id as string}>{d.name as string}</option>
+              ))}
+            </select>
+            <select
+              value={teamFilter}
+              onChange={e => { setTeamFilter(e.target.value); setUserFilter(''); setDepartmentFilter(''); setPage(1); }}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">All Teams</option>
+              {(Array.isArray(teamsData) ? teamsData : []).map((t: Record<string, unknown>) => (
+                <option key={t.id as string} value={t.id as string}>{t.name as string}</option>
+              ))}
+            </select>
+            <select
+              value={userFilter}
+              onChange={e => { setUserFilter(e.target.value); setPage(1); }}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">All Employees</option>
+              {(usersData?.users || []).map((u: Record<string, unknown>) => (
+                <option key={u.id as string} value={u.id as string}>
+                  {u.firstName as string} {u.lastName as string}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
       </div>
 

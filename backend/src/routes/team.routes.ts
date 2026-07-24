@@ -21,6 +21,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     const { departmentId, projectId, clientId, search } = req.query;
     const orgFilter = {
       OR: [
+        { organizationId: req.user!.organizationId },
         { department: { organizationId: req.user!.organizationId } },
         { project: { organizationId: req.user!.organizationId } },
         { client: { organizationId: req.user!.organizationId } },
