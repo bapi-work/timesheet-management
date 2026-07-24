@@ -17,9 +17,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "WorkCategory_organizationId_name_key" ON "Wor
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "WorkCategory_organizationId_isActive_idx" ON "WorkCategory"("organizationId", "isActive");
 
--- AddForeignKey
-ALTER TABLE "WorkCategory" ADD CONSTRAINT "WorkCategory_organizationId_fkey"
-    FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- AddForeignKey (idempotent)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'WorkCategory_organizationId_fkey') THEN
+    ALTER TABLE "WorkCategory" ADD CONSTRAINT "WorkCategory_organizationId_fkey"
+        FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- Seed default categories for every existing organization
 INSERT INTO "WorkCategory" ("id", "organizationId", "name", "isActive", "sortOrder", "createdAt", "updatedAt")
