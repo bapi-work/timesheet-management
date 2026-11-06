@@ -32,8 +32,9 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
         prisma.timesheetApproval.count({ where: { approverId: req.user!.userId, status: 'PENDING' } }),
         (async () => {
           const submitted = await prisma.timesheet.findMany({
-            where: { periodStart: { gte: weekStart }, status: { in: ['SUBMITTED', 'APPROVED'] } },
+            where: { periodStart: { gte: weekStart }, status: { in: ['SUBMITTED', 'APPROVED'] }, user: { organizationId: orgId, isActive: true, role: { not: 'SYSTEM_ADMIN' } } },
             select: { userId: true },
+            distinct: ['userId'],
           });
           const total = await prisma.user.count({ where: { organizationId: orgId, isActive: true, role: { not: 'SYSTEM_ADMIN' } } });
           return total - submitted.length;
@@ -118,7 +119,7 @@ router.get('/trends', authorize(...ANALYTICS_ROLES), async (req: AuthRequest, re
     const userFilter: Record<string, unknown> = { organizationId: req.user!.organizationId };
     if (departmentId) userFilter.departmentId = departmentId as string;
 
-    const numMonths = Number(months);
+    const numMonths = Math.min(Math.max(Number(months) || 12, 1), 60);
     for (let i = numMonths - 1; i >= 0; i--) {
       const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);

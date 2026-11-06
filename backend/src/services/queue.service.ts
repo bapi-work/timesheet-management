@@ -1,6 +1,6 @@
 import Bull from 'bull';
 import { logger } from '../utils/logger';
-import { sendEmail } from './email.service';
+import { escapeHtml, sendEmail } from './email.service';
 import prisma from '../utils/prisma';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -56,7 +56,7 @@ async function sendTimesheetReminders(): Promise<void> {
     await emailQueue.add({
       to: user.email,
       subject: 'Timesheet Reminder',
-      html: `<p>Hi ${user.firstName}, please submit your timesheet for this week.</p>`,
+      html: `<p>Hi ${escapeHtml(user.firstName)}, please submit your timesheet for this week.</p>`,
     });
 
     await notificationQueue.add({

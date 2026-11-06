@@ -90,7 +90,7 @@ router.post('/periods/:id/process', authorize(...PAYROLL_ROLES), async (req: Aut
     });
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="payroll-${period.name}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="payroll-${period.name.replace(/[^\w.-]+/g, '_')}.xlsx"`);
     res.send(buf);
   } catch (err) {
     next(err);

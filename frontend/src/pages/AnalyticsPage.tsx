@@ -7,6 +7,7 @@ import {
   Tooltip, Legend, LineElement, PointElement, Title, Filler,
 } from 'chart.js';
 import api from '../lib/api';
+import { csvCell } from '../lib/csv';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
 import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
@@ -42,7 +43,7 @@ const CHART_COLORS = [
 ];
 
 function exportCSV(rows: string[][], filename: string) {
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

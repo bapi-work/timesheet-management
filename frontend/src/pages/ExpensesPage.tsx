@@ -26,8 +26,8 @@ const CATEGORIES = ['Travel', 'Accommodation', 'Meals', 'Equipment', 'Software',
 
 const schema = z.object({
   category: z.string().min(1, 'Category is required'),
-  amount: z.number({ invalid_type_error: 'Amount required' }).positive(),
-  currency: z.string().default('USD'),
+  amount: z.number({ error: 'Amount required' }).positive(),
+  currency: z.string(),
   date: z.string().min(1, 'Date required'),
   description: z.string().min(1, 'Description required'),
   projectId: z.string().optional(),

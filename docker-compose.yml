@@ -64,7 +64,8 @@ services:
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@timesheet.local}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       INITIAL_ORG_NAME: ${INITIAL_ORG_NAME:-My Organization}
-      REQUIRE_ADMIN_MFA: ${REQUIRE_ADMIN_MFA:-false}
+      REQUIRE_ADMIN_MFA: ${REQUIRE_ADMIN_MFA:-true}
+      ALLOW_PRIVATE_BACKUP_TARGETS: ${ALLOW_PRIVATE_BACKUP_TARGETS:-false}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     ports:
       # Local only: public traffic must come through nginx, which sets the client IP

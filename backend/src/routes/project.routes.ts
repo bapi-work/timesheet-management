@@ -7,6 +7,25 @@ import { AppError } from '../middleware/error.middleware';
 const router = Router();
 router.use(authenticate);
 
+async function assertProjectInOrg(id: string, orgId: string): Promise<void> {
+  const project = await prisma.project.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
+  if (!project) throw new AppError('Project not found', 404);
+}
+
+async function assertUserInOrg(id: unknown, orgId: string): Promise<void> {
+  const user = await prisma.user.findFirst({ where: { id: String(id), organizationId: orgId }, select: { id: true } });
+  if (!user) throw new AppError('User not found', 404);
+}
+
+async function assertTaskInProject(taskId: string, projectId: string, orgId: string): Promise<void> {
+  const task = await prisma.task.findFirst({ where: { id: taskId, projectId, project: { organizationId: orgId } }, select: { id: true } });
+  if (!task) throw new AppError('Task not found', 404);
+}
+
+// Employees and Team Leads only see the projects they're assigned to, as in the project list
+const assignedOnly = (user: Express.User) =>
+  user.role === 'EMPLOYEE' || user.role === 'TEAM_LEAD' ? { members: { some: { userId: user.userId } } } : {};
+
 const projectSchema = z.object({
   name: z.string().min(1, 'Project name is required'),
   code: z.string().min(1, 'Project code is required'),
@@ -64,9 +83,10 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
 router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const project = await prisma.project.findFirst({
-      where: { id: req.params.id, organizationId: req.user!.organizationId },
+      where: { id: req.params.id, organizationId: req.user!.organizationId, ...assignedOnly(req.user!) },
       include: {
-        client: true,
+        // Tax IDs and contact details are for managers, as on the clients pages
+        client: (MANAGER_ROLES as string[]).includes(req.user!.role) ? true : { select: { id: true, name: true } },
         tasks: true,
         members: { include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } } },
         _count: { select: { entries: true } },
@@ -88,6 +108,7 @@ router.post('/', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Resp
       where: { id: data.clientId, organizationId: req.user!.organizationId, isActive: true },
     });
     if (!client) throw new AppError('Client not found or inactive', 404);
+    if (data.managerId) await assertUserInOrg(data.managerId, req.user!.organizationId);
 
     const project = await prisma.project.create({
       data: {
@@ -112,6 +133,7 @@ router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Re
     if (!existing) throw new AppError('Project not found', 404);
 
     const data = projectSchema.partial().parse(req.body);
+    if (data.managerId) await assertUserInOrg(data.managerId, req.user!.organizationId);
 
     // If changing client, validate it
     if (data.clientId && data.clientId !== existing.clientId) {
@@ -156,6 +178,8 @@ router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res:
 router.post('/:id/members', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { userId, role, allocatedHours, startDate, endDate } = req.body;
+    await assertProjectInOrg(req.params.id, req.user!.organizationId);
+    await assertUserInOrg(userId, req.user!.organizationId);
     const member = await prisma.projectMember.upsert({
       where: { projectId_userId: { projectId: req.params.id, userId } },
       update: { role, allocatedHours, startDate: startDate ? new Date(startDate) : undefined, endDate: endDate ? new Date(endDate) : undefined },
@@ -169,6 +193,7 @@ router.post('/:id/members', authorize(...MANAGER_ROLES), async (req: AuthRequest
 
 router.delete('/:id/members/:userId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    await assertProjectInOrg(req.params.id, req.user!.organizationId);
     await prisma.projectMember.delete({
       where: { projectId_userId: { projectId: req.params.id, userId: req.params.userId } },
     });
@@ -181,6 +206,7 @@ router.delete('/:id/members/:userId', authorize(...MANAGER_ROLES), async (req: A
 router.post('/:id/tasks', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { name, description, estimatedHours, isBillable } = req.body;
+    await assertProjectInOrg(req.params.id, req.user!.organizationId);
     const task = await prisma.task.create({
       data: { projectId: req.params.id, name, description, estimatedHours, isBillable: isBillable ?? true },
     });
@@ -193,6 +219,7 @@ router.post('/:id/tasks', authorize(...MANAGER_ROLES), async (req: AuthRequest, 
 router.put('/:id/tasks/:taskId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { name, description, estimatedHours, isBillable, isActive } = req.body;
+    await assertTaskInProject(req.params.taskId, req.params.id, req.user!.organizationId);
     const task = await prisma.task.update({
       where: { id: req.params.taskId },
       data: { name, description, estimatedHours, isBillable, isActive },
@@ -205,6 +232,7 @@ router.put('/:id/tasks/:taskId', authorize(...MANAGER_ROLES), async (req: AuthRe
 
 router.delete('/:id/tasks/:taskId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    await assertTaskInProject(req.params.taskId, req.params.id, req.user!.organizationId);
     const inUse = await prisma.timesheetEntry.count({ where: { taskId: req.params.taskId } });
     if (inUse > 0) {
       const task = await prisma.task.update({ where: { id: req.params.taskId }, data: { isActive: false } });
@@ -220,6 +248,12 @@ router.delete('/:id/tasks/:taskId', authorize(...MANAGER_ROLES), async (req: Aut
 router.get('/:id/utilization', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { from, to } = req.query;
+    const visible = await prisma.project.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId, ...assignedOnly(req.user!) },
+      select: { id: true },
+    });
+    if (!visible) throw new AppError('Project not found', 404);
+
     const entries = await prisma.timesheetEntry.groupBy({
       by: ['taskId'],
       where: {

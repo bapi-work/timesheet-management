@@ -137,7 +137,7 @@ router.post('/import-employees', upload.single('file'), async (req: AuthRequest,
         results.credentials.push({ email, tempPassword });
       } catch (e) {
         results.failed++;
-        results.errors.push(`Row ${results.created + results.failed}: ${(e as Error).message}`);
+        results.errors.push(`Row ${results.created + results.failed}: ${(e as { code?: string }).code === 'P2002' ? 'Email or Employee ID already exists' : 'Could not be imported'}`);
       }
     }
 

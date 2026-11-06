@@ -35,19 +35,28 @@ const EXPENSE_CATEGORIES = [
   'Training', 'Marketing', 'Office Supplies', 'Communication', 'Other',
 ];
 
-const createSchema = z.object({
+const expenseFields = {
   projectId: z.string().optional(),
   category: z.string().min(1),
   amount: z.number().positive(),
-  currency: z.string().default('USD'),
+  currency: z.string(),
   date: z.string(),
   description: z.string().min(1),
   // An uploaded receipt, or a link to one elsewhere. Rejects javascript: and other schemes.
   receiptUrl: z.string().regex(/^(\/uploads\/receipts\/[a-f0-9]{32}\.[a-z0-9]{2,5}|https?:\/\/\S+)$/i, 'Invalid receipt link').optional(),
   notes: z.string().optional(),
-});
+};
 
-const updateSchema = createSchema.partial();
+const createSchema = z.object({ ...expenseFields, currency: z.string().default('USD') });
+
+// No defaults here: an update that leaves a field out must keep its current value
+const updateSchema = z.object(expenseFields).partial();
+
+async function assertProjectInOrg(projectId: string | undefined, orgId: string): Promise<void> {
+  if (!projectId) return;
+  const project = await prisma.project.findFirst({ where: { id: projectId, organizationId: orgId }, select: { id: true } });
+  if (!project) throw new AppError('Project not found', 404);
+}
 
 async function loadReviewableExpense(id: string, viewer: Express.User) {
   const expense = await prisma.expense.findFirst({ where: { id, organizationId: viewer.organizationId } });
@@ -139,6 +148,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 router.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = createSchema.parse(req.body);
+    await assertProjectInOrg(data.projectId, req.user!.organizationId);
     const expense = await prisma.expense.create({
       data: {
         userId: req.user!.userId,
@@ -173,6 +183,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
     if (!['DRAFT', 'REJECTED'].includes(existing.status)) throw new AppError('Cannot edit a submitted expense', 400);
 
     const data = updateSchema.parse(req.body);
+    await assertProjectInOrg(data.projectId, req.user!.organizationId);
     const expense = await prisma.expense.update({
       where: { id: req.params.id },
       data: {

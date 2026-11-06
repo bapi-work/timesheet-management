@@ -9,7 +9,7 @@ import { AppError } from '../middleware/error.middleware';
 import { emailQueue, notificationQueue } from '../services/queue.service';
 import { approvalPendingTemplate } from '../services/email.service';
 import { canReviewUser, getReviewableUserIds } from '../utils/access';
-import { assertDatesEditable, assertWithinPeriod, loadEditState, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
+import { assertDatesEditable, assertEntryLinksInOrg, assertWithinPeriod, loadEditState, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -227,7 +227,9 @@ router.post('/:id/entries', async (req: AuthRequest, res: Response, next: NextFu
     if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
 
     const entries = Array.isArray(req.body) ? req.body : [req.body];
+    if (entries.length > 200) throw new AppError('Too many entries in one request', 400);
     const validated = entries.map(e => entrySchema.parse(e));
+    for (const e of validated) await assertEntryLinksInOrg(req.user!.organizationId, e.projectId, e.taskId);
     const dates = validated.map(e => new Date(e.date));
     dates.forEach(d => assertWithinPeriod(timesheet, d));
     await assertDatesEditable(prisma, timesheet, dates);
@@ -274,6 +276,7 @@ router.put('/:id/entries/:entryId', async (req: AuthRequest, res: Response, next
     if (!existing) throw new AppError('Entry not found', 404);
 
     const data = entrySchema.partial().parse(req.body);
+    await assertEntryLinksInOrg(req.user!.organizationId, data.projectId, data.taskId);
     const dates = [existing.date, ...(data.date ? [new Date(data.date)] : [])];
     if (data.date) assertWithinPeriod(timesheet, new Date(data.date));
     await assertDatesEditable(prisma, timesheet, dates);
@@ -609,7 +612,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
     });
 
     // Validate and group entries by week
-    const timesheetMap = new Map<string, { periodStart: Date; periodEnd: Date; entries: typeof entrySchema._type[] }>();
+    const timesheetMap = new Map<string, { periodStart: Date; periodEnd: Date; entries: z.infer<typeof entrySchema>[] }>();
 
     const projects = await prisma.project.findMany({
       where: { organizationId: req.user!.organizationId },
@@ -617,7 +620,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
     });
 
     const errors: string[] = [];
-    const validRows: { timesheetKey: string; periodStart: Date; periodEnd: Date; entry: typeof entrySchema._type }[] = [];
+    const validRows: { timesheetKey: string; periodStart: Date; periodEnd: Date; entry: z.infer<typeof entrySchema> }[] = [];
 
     for (let i = 0; i < normalised.length; i++) {
       const row = normalised[i];

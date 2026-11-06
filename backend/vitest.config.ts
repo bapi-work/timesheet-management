@@ -20,6 +20,8 @@ export default defineConfig({
       JWT_SECRET: 'test_access_secret_at_least_32_characters',
       JWT_REFRESH_SECRET: 'test_refresh_secret_at_least_32_characters',
       FRONTEND_URL: 'http://localhost:3000',
+      REQUIRE_ADMIN_MFA: 'false',
+      ALLOW_PRIVATE_BACKUP_TARGETS: 'true',
     },
   },
 });

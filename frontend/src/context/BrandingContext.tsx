@@ -72,7 +72,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
     queryKey: ['branding'],
     queryFn: () =>
       isAuthenticated
-        ? api.get('/admin/branding').then(r => r.data).catch(() => api.get('/public/branding').then(r => r.data))
+        ? api.get('/auth/branding').then(r => r.data)
         : fetch('/api/public/branding').then(r => r.json()),
     staleTime: 5 * 60 * 1000,
     retry: false,

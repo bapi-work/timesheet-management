@@ -9,6 +9,7 @@ import net from 'net';
 
 import { errorHandler } from './middleware/error.middleware';
 import { requestLogger } from './middleware/audit.middleware';
+import { sanitizeQuery } from './middleware/query.middleware';
 
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
@@ -58,6 +59,7 @@ const limiter = rateLimit({
   message: 'Too many requests, please try again later.',
 });
 app.use('/api/', limiter);
+app.use('/api/', sanitizeQuery);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/files', fileRoutes);
@@ -83,6 +85,12 @@ app.use('/api/teams', teamRoutes);
 // Public branding endpoint (used by login page before auth)
 app.get('/api/public/branding', async (_req, res) => {
   try {
+    // With several organizations on this server, the sign-in page can't know which one is
+    // visiting and must not show one tenant's branding to another's users
+    if ((await prisma.organization.count()) > 1) {
+      res.json({});
+      return;
+    }
     const org = await prisma.organization.findFirst({
       select: { appName: true, logoUrl: true, faviconUrl: true, primaryColor: true, secondaryColor: true, accentColor: true, loginBgColor: true, footerText: true, name: true },
     });

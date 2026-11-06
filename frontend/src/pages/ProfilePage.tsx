@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
+import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../store/auth.store';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
@@ -17,7 +18,9 @@ const TIMEZONES = [
 export default function ProfilePage() {
   const { user, refreshUser, completePasswordChange } = useAuthStore();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'profile' | 'security'>('profile');
+  const [searchParams] = useSearchParams();
+  const mfaRequired = searchParams.get('setup') === 'mfa';
+  const [tab, setTab] = useState<'profile' | 'security'>(mfaRequired ? 'security' : 'profile');
   const [mfaSetup, setMfaSetup] = useState<{ secret: string; otpauthUrl: string } | null>(null);
 
   // Fetch full profile from server to get current phone/timezone (#19)
@@ -75,13 +78,24 @@ export default function ProfilePage() {
 
   const verifyMfaMutation = useMutation({
     mutationFn: (d: Record<string, unknown>) => api.post('/auth/verify-mfa', d),
-    onSuccess: () => { toast.success('MFA enabled!'); setMfaSetup(null); refreshUser(); },
+    onSuccess: async () => {
+      toast.success('MFA enabled!');
+      setMfaSetup(null);
+      await refreshUser();
+      if (mfaRequired) window.location.href = '/dashboard';
+    },
     onError: () => toast.error('Invalid code'),
   });
 
   return (
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold text-gray-900">My Profile</h1>
+
+      {mfaRequired && !user?.mfaEnabled && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
+          Administrator accounts must use two-factor authentication. Set it up below to continue.
+        </div>
+      )}
 
       <div className="flex gap-1 p-1 bg-gray-100 rounded-xl w-fit">
         {(['profile', 'security'] as const).map(t => (
@@ -181,7 +195,7 @@ export default function ProfilePage() {
 
             {mfaSetup && (
               <div className="space-y-4">
-                <p className="text-sm text-gray-600">Scan this QR code or manually enter the secret in your authenticator app:</p>
+                <p className="text-sm text-gray-600">Add a new account in your authenticator app and enter this secret, then type the 6-digit code it shows:</p>
                 <div className="bg-gray-50 rounded-lg p-3 font-mono text-sm break-all">{mfaSetup.secret}</div>
                 <form onSubmit={hsMfa(d => verifyMfaMutation.mutate(d as Record<string, unknown>))} className="flex gap-3">
                   <input {...regMfa('code', { required: true })} className="input max-w-32" placeholder="000000" maxLength={6} />

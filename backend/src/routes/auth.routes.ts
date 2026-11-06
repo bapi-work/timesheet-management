@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import speakeasy from 'speakeasy';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
 import prisma from '../utils/prisma';
 import redis from '../utils/redis';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken, TokenPayload } from '../utils/jwt';
@@ -41,20 +42,48 @@ const verifyMfaSchema = z.object({
 });
 
 // ISO 27001 A.9.4: Track failed login attempts in Redis (distributed, survives restarts)
+// Locks are per email and client, so a stranger can't lock someone out of their own account.
+// A much higher limit per email slows attacks spread across many addresses.
 const MAX_FAILED = 5;
 const LOCKOUT_SECS = 30 * 60; // 30 minutes
+const GLOBAL_MAX_FAILED = 50;
+const GLOBAL_LOCKOUT_SECS = 15 * 60;
 const REFRESH_COOKIE_PATH = '/api/auth';
-const lockKey = (email: string) => `login:lock:${email.toLowerCase()}`;
-const attemptsKey = (email: string) => `login:attempts:${email.toLowerCase()}`;
+const clientKey = (email: string, ip: string) => `${email.toLowerCase()}:${ip}`;
 
-// Counts wrong passwords and wrong MFA codes alike; locks after MAX_FAILED
-async function recordFailedAttempt(email: string): Promise<void> {
-  const count = await redis.incr(attemptsKey(email));
-  if (count === 1) await redis.expire(attemptsKey(email), LOCKOUT_SECS);
+// Compared when there's no password to check, so unknown accounts take as long as real ones
+const DUMMY_HASH = bcrypt.hash(crypto.randomBytes(16).toString('hex'), 12);
+
+// Counts wrong passwords and wrong MFA codes alike, for existing and unknown emails alike
+async function recordFailedAttempt(email: string, ip: string): Promise<void> {
+  const key = clientKey(email, ip);
+  const count = await redis.incr(`login:attempts:${key}`);
+  if (count === 1) await redis.expire(`login:attempts:${key}`, LOCKOUT_SECS);
   if (count >= MAX_FAILED) {
-    await redis.set(lockKey(email), '1', 'EX', LOCKOUT_SECS);
-    await redis.del(attemptsKey(email));
+    await redis.set(`login:lock:${key}`, '1', 'EX', LOCKOUT_SECS);
+    await redis.del(`login:attempts:${key}`);
   }
+
+  const globalKey = `login:attempts-all:${email.toLowerCase()}`;
+  const total = await redis.incr(globalKey);
+  if (total === 1) await redis.expire(globalKey, 60 * 60);
+  if (total >= GLOBAL_MAX_FAILED) {
+    await redis.set(`login:lock-all:${email.toLowerCase()}`, '1', 'EX', GLOBAL_LOCKOUT_SECS);
+    await redis.del(globalKey);
+  }
+}
+
+async function lockoutSeconds(email: string, ip: string): Promise<number> {
+  const [client, all] = await Promise.all([
+    redis.ttl(`login:lock:${clientKey(email, ip)}`),
+    redis.ttl(`login:lock-all:${email.toLowerCase()}`),
+  ]);
+  return Math.max(client, all);
+}
+
+async function clearFailedAttempts(email: string, ip: string): Promise<void> {
+  const key = clientKey(email, ip);
+  await redis.del(`login:attempts:${key}`, `login:lock:${key}`);
 }
 
 // A code is valid once: replaying one seen on the wire or over a shoulder fails
@@ -93,10 +122,11 @@ router.post('/login', credentialLimiter, async (req: Request, res: Response, nex
     const { email, password, mfaCode } = loginSchema.parse(req.body);
 
     // ISO 27001 A.9.4: Check account lockout via Redis
-    const ttl = await redis.ttl(lockKey(email));
+    const ip = req.ip || '';
+    const ttl = await lockoutSeconds(email, ip);
     if (ttl > 0) {
       const minutesLeft = Math.ceil(ttl / 60);
-      throw new AppError(`Account temporarily locked. Try again in ${minutesLeft} minute(s).`, 423);
+      throw new AppError(`Too many failed attempts. Try again in ${minutesLeft} minute(s).`, 423);
     }
 
     const user = await prisma.user.findUnique({
@@ -110,12 +140,11 @@ router.post('/login', credentialLimiter, async (req: Request, res: Response, nex
       },
     });
 
-    if (!user || !user.isActive) throw new AppError('Invalid credentials', 401);
-    if (!user.passwordHash) throw new AppError('Please use SSO to login', 401);
-
-    const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) {
-      await recordFailedAttempt(email);
+    // The same response and the same work whether the account is missing, inactive or SSO-only
+    const canUsePassword = !!user && user.isActive && !!user.passwordHash;
+    const valid = await bcrypt.compare(password, canUsePassword ? user.passwordHash! : await DUMMY_HASH);
+    if (!valid || !canUsePassword) {
+      await recordFailedAttempt(email, ip);
       throw new AppError('Invalid credentials', 401);
     }
 
@@ -134,14 +163,13 @@ router.post('/login', credentialLimiter, async (req: Request, res: Response, nex
         return;
       }
       if (!(await verifyTotp(user.id, user.mfaSecret!, mfaCode))) {
-        await recordFailedAttempt(email);
+        await recordFailedAttempt(email, ip);
         throw new AppError('Invalid MFA code', 401);
       }
     }
 
     // Clear failed attempts only after every factor has passed
-    await redis.del(attemptsKey(email));
-    await redis.del(lockKey(email));
+    await clearFailedAttempts(email, ip);
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
@@ -274,6 +302,24 @@ router.post('/verify-mfa', credentialLimiter, authenticate, async (req: AuthRequ
       data: { mfaEnabled: true, mfaSecret: user.mfaPendingSecret, mfaPendingSecret: null },
     });
     res.json({ message: 'MFA enabled' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The signed-in user's own organization branding
+router.get('/branding', authenticate, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: req.user!.organizationId },
+      select: {
+        appName: true, logoUrl: true, faviconUrl: true,
+        primaryColor: true, secondaryColor: true, accentColor: true,
+        sidebarBgColor: true, loginBgColor: true,
+        footerText: true, supportEmail: true, name: true,
+      },
+    });
+    res.json(org || {});
   } catch (err) {
     next(err);
   }

@@ -31,6 +31,18 @@ You must change the password at first sign-in.
 
 Demo data for local development only: `cd backend && npm run db:seed`. It is refused in production.
 
+## Adding an Organization
+
+Each organization's data is isolated, and its System Admin only manages that organization. Add one from the server:
+
+```bash
+docker compose exec backend node dist/scripts/create-org.js --name "Acme Ltd" --code ACME --admin-email admin@acme.example
+```
+
+This prints the first admin's temporary password. They change it at first sign-in and then set up MFA. Email addresses are unique across the whole server; employee IDs and invoice numbers are per organization.
+
+If an admin loses their authenticator, another System Admin in that organization can reset it from the employee's page.
+
 ## Architecture
 
 ```

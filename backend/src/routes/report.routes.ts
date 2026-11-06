@@ -278,7 +278,9 @@ router.get('/export', authorize(...MANAGER_ROLES), async (req: AuthRequest, res:
     }
 
     if (format === 'csv') {
-      const ws = XLSX.utils.json_to_sheet(data);
+      const ws = XLSX.utils.json_to_sheet(data.map(row =>
+        Object.fromEntries(Object.entries(row).map(([k, v]) => [k, csvSafe(v)]))
+      ));
       const csv = XLSX.utils.sheet_to_csv(ws);
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="report.csv"`);
@@ -314,6 +316,11 @@ router.get('/export', authorize(...MANAGER_ROLES), async (req: AuthRequest, res:
     next(err);
   }
 });
+
+// A cell starting with one of these runs as a formula when the CSV is opened in a spreadsheet
+function csvSafe(value: unknown): unknown {
+  return typeof value === 'string' && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
 
 function getWeekStart(): Date {
   const d = new Date();

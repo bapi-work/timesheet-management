@@ -94,8 +94,13 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 
 router.get('/:id/members', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const isManager = ([...MANAGER_ROLES] as string[]).includes(req.user!.role);
     const client = await prisma.client.findFirst({
-      where: { id: req.params.id, organizationId: req.user!.organizationId },
+      where: {
+        id: req.params.id,
+        organizationId: req.user!.organizationId,
+        ...(isManager ? {} : { clientMembers: { some: { userId: req.user!.userId } } }),
+      },
     });
     if (!client) throw new AppError('Client not found', 404);
 

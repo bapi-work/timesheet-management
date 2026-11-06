@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '../utils/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
-import { assertDatesEditable, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
+import { assertDatesEditable, assertEntryLinksInOrg, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
 
 const router = Router();
 router.use(authenticate);
@@ -40,6 +40,7 @@ router.get('/active', async (req: AuthRequest, res: Response, next: NextFunction
 router.post('/start', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { projectId, taskId, description } = startSchema.parse(req.body);
+    await assertEntryLinksInOrg(req.user!.organizationId, projectId, taskId);
 
     // Check no timer is already running
     const existing = await prisma.timesheetEntry.findFirst({

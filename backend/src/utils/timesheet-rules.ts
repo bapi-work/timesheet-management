@@ -22,6 +22,21 @@ export function assertWithinPeriod(timesheet: { periodStart: Date; periodEnd: Da
   }
 }
 
+// Hours can only be logged against this organization's projects and tasks
+export async function assertEntryLinksInOrg(orgId: string, projectId?: string | null, taskId?: string | null): Promise<void> {
+  if (projectId) {
+    const project = await prisma.project.findFirst({ where: { id: projectId, organizationId: orgId }, select: { id: true } });
+    if (!project) throw new AppError('Project not found', 404);
+  }
+  if (taskId) {
+    const task = await prisma.task.findFirst({
+      where: { id: taskId, project: { organizationId: orgId }, ...(projectId ? { projectId } : {}) },
+      select: { id: true },
+    });
+    if (!task) throw new AppError('Task not found', 404);
+  }
+}
+
 export async function loadEditState(db: Db, timesheetId: string) {
   const [weekApprovals, approvedDays] = await Promise.all([
     db.timesheetApproval.count({ where: { timesheetId, status: 'APPROVED' } }),

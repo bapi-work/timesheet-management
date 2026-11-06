@@ -6,6 +6,17 @@ import { AppError } from '../middleware/error.middleware';
 const router = Router();
 router.use(authenticate);
 
+async function assertLinksInOrg(orgId: string, managerId?: unknown, parentId?: unknown): Promise<void> {
+  if (managerId) {
+    const manager = await prisma.user.findFirst({ where: { id: String(managerId), organizationId: orgId }, select: { id: true } });
+    if (!manager) throw new AppError('Manager not found', 404);
+  }
+  if (parentId) {
+    const parent = await prisma.department.findFirst({ where: { id: String(parentId), organizationId: orgId }, select: { id: true } });
+    if (!parent) throw new AppError('Parent department not found', 404);
+  }
+}
+
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const departments = await prisma.department.findMany({
@@ -42,6 +53,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 router.post('/', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { name, code, description, managerId, parentId, costCenter } = req.body;
+    await assertLinksInOrg(req.user!.organizationId, managerId, parentId);
     const dept = await prisma.department.create({
       data: { name, code, description, managerId, parentId, costCenter, organizationId: req.user!.organizationId },
     });
@@ -53,9 +65,18 @@ router.post('/', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Respon
 
 router.put('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const existing = await prisma.department.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId }, select: { id: true } });
+    if (!existing) throw new AppError('Department not found', 404);
+
+    const { name, code, description, managerId, parentId, costCenter } = req.body;
+    await assertLinksInOrg(req.user!.organizationId, managerId, parentId);
     const dept = await prisma.department.update({
       where: { id: req.params.id },
-      data: req.body,
+      data: {
+        name, code, description, costCenter,
+        managerId: managerId === '' ? null : managerId,
+        parentId: parentId === '' ? null : parentId,
+      },
     });
     res.json(dept);
   } catch (err) {

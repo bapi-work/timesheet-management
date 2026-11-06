@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import * as net from 'net';
+import { Readable } from 'stream';
+import { Client as FtpClient } from 'basic-ftp';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -8,6 +9,7 @@ import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { stripSecrets } from '../utils/sessions';
+import { resolvePublicHost } from '../utils/net-guard';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -115,7 +117,7 @@ router.post('/restore', async (req: AuthRequest, res: Response, next: NextFuncti
       if (fileType === 'gz' || fileType === 'gzip') {
         // backupData is base64-encoded gz
         const buf = Buffer.from(backupData as string, 'base64');
-        const decompressed = await gunzip(buf);
+        const decompressed = await (gunzip as (b: Buffer, o: zlib.ZlibOptions) => Promise<Buffer>)(buf, { maxOutputLength: 200 * 1024 * 1024 });
         parsed = JSON.parse(decompressed.toString('utf8'));
       } else {
         parsed = typeof backupData === 'string' ? JSON.parse(backupData) : backupData;
@@ -142,30 +144,38 @@ router.post('/restore', async (req: AuthRequest, res: Response, next: NextFuncti
 
 const ftpSchema = z.object({
   host: z.string().min(1),
-  port: z.number().default(21),
+  port: z.number().int().min(1).max(65535).default(21),
+  secure: z.boolean().default(true), // FTPS. Plain FTP sends the password and backup unencrypted.
   user: z.string().min(1),
   password: z.string().min(1),
   remotePath: z.string().default('/backups'),
 });
 
-// POST /api/backup/ftp — tests FTP connectivity only; no file is uploaded
+// POST /api/backup/ftp — upload a compressed backup over FTPS or FTP
 router.post('/ftp', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { host, port, user, password, remotePath } = ftpSchema.parse(req.body);
+    const { host, port, user, password, remotePath, secure } = ftpSchema.parse(req.body);
     const orgId = req.user!.organizationId;
 
-    const fileName = `backup-${orgId}-${new Date().toISOString().slice(0, 10)}.json.gz`;
+    const address = await resolvePublicHost(host);
+    const { compressed, fileName } = await buildBackupContent(orgId);
 
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('FTP connection timeout')), 15000);
-      const socket = new net.Socket();
-      socket.connect(port, host, () => {
-        clearTimeout(timeout);
-        socket.destroy();
-        resolve();
+    // By default this client keeps data connections on the host checked above
+    const client = new FtpClient(30000);
+    try {
+      await client.access({
+        host: address,
+        port,
+        user,
+        password,
+        secure,
+        secureOptions: { servername: host },
       });
-      socket.on('error', (err) => { clearTimeout(timeout); reject(err); });
-    });
+      await client.ensureDir(remotePath);
+      await client.uploadFrom(Readable.from(compressed), fileName);
+    } finally {
+      client.close();
+    }
 
     const destination = `ftp://${user}@${host}:${port}${remotePath}/${fileName}`;
 
@@ -174,15 +184,18 @@ router.post('/ftp', async (req: AuthRequest, res: Response, next: NextFunction) 
         organizationId: orgId,
         createdBy: req.user!.userId,
         type: 'ftp',
-        status: 'connection-test',
+        status: 'success',
         fileName,
+        fileSizeBytes: compressed.length,
         destination,
       },
     });
 
     res.json({
-      message: 'FTP connection succeeded, but no backup was uploaded. FTP upload is not available yet: use Download or Cloud backup.',
+      message: 'Backup uploaded successfully via FTP.',
+      fileName,
       destination,
+      compressedSizeBytes: compressed.length,
     });
   } catch (err: unknown) {
     const orgId = req.user!.organizationId;
@@ -214,6 +227,7 @@ router.post('/cloud', async (req: AuthRequest, res: Response, next: NextFunction
   try {
     const { endpoint, bucket, accessKey, secretKey, region } = s3Schema.parse(req.body);
     const orgId = req.user!.organizationId;
+    await resolvePublicHost(new URL(endpoint).hostname);
 
     const { compressed, fileName } = await buildBackupContent(orgId);
 

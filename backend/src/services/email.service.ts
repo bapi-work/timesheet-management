@@ -31,12 +31,17 @@ export async function sendEmail(opts: EmailOptions): Promise<void> {
   });
 }
 
+// Names and comments are user-editable, so they can't be placed in HTML as they are
+export function escapeHtml(value: string): string {
+  return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
 export function timesheetApprovedTemplate(name: string, period: string): string {
   return `
     <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
       <h2 style="color:#16a34a">Timesheet Approved</h2>
-      <p>Hi ${name},</p>
-      <p>Your timesheet for <strong>${period}</strong> has been <strong style="color:#16a34a">approved</strong>.</p>
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Your timesheet for <strong>${escapeHtml(period)}</strong> has been <strong style="color:#16a34a">approved</strong>.</p>
     </div>`;
 }
 
@@ -44,9 +49,9 @@ export function timesheetRejectedTemplate(name: string, period: string, reason: 
   return `
     <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
       <h2 style="color:#dc2626">Timesheet Rejected</h2>
-      <p>Hi ${name},</p>
-      <p>Your timesheet for <strong>${period}</strong> has been <strong style="color:#dc2626">rejected</strong>.</p>
-      <p><strong>Reason:</strong> ${reason}</p>
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Your timesheet for <strong>${escapeHtml(period)}</strong> has been <strong style="color:#dc2626">rejected</strong>.</p>
+      <p><strong>Reason:</strong> ${escapeHtml(reason)}</p>
       <p>Please revise and resubmit.</p>
     </div>`;
 }
@@ -55,8 +60,8 @@ export function approvalPendingTemplate(approverName: string, employeeName: stri
   return `
     <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
       <h2 style="color:#2563eb">Timesheet Pending Approval</h2>
-      <p>Hi ${approverName},</p>
-      <p><strong>${employeeName}</strong> has submitted a timesheet awaiting your approval.</p>
+      <p>Hi ${escapeHtml(approverName)},</p>
+      <p><strong>${escapeHtml(employeeName)}</strong> has submitted a timesheet awaiting your approval.</p>
       <a href="${process.env.FRONTEND_URL}/approvals" style="background:#2563eb;color:white;padding:10px 20px;text-decoration:none;border-radius:4px">Review Now</a>
     </div>`;
 }

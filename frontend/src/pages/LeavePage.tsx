@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { format } from 'date-fns';
 import api from '../lib/api';
+import { csvCell } from '../lib/csv';
 import { openAttachment } from '../lib/files';
 import toast from 'react-hot-toast';
 import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, ArrowDownTrayIcon, UserPlusIcon } from '@heroicons/react/24/outline';
@@ -29,7 +30,7 @@ function exportLeaveCSV(requests: Record<string, unknown>[], filename: string) {
       ];
     }),
   ];
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click();

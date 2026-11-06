@@ -205,6 +205,7 @@ router.post('/bulk-approve', async (req: AuthRequest, res: Response, next: NextF
   try {
     const { approvalIds, comments } = req.body as { approvalIds: string[]; comments?: string };
     if (!Array.isArray(approvalIds) || approvalIds.length === 0) throw new AppError('No IDs provided', 400);
+    if (approvalIds.length > 500) throw new AppError('Too many approvals in one request', 400);
 
     // One at a time: two rows can belong to the same timesheet, and only the first may settle it
     let succeeded = 0;
@@ -397,9 +398,56 @@ router.post('/day-submissions/:id/reject', async (req: AuthRequest, res: Respons
   }
 });
 
+// Sends an approved timesheet back to the employee to correct. Blocked once payroll has locked it.
+router.post('/timesheets/:id/reopen', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { reason } = req.body;
+    if (typeof reason !== 'string' || !reason.trim()) throw new AppError('A reason is required to reopen a timesheet', 400);
+
+    const timesheet = await prisma.timesheet.findFirst({
+      where: { id: req.params.id, user: { organizationId: req.user!.organizationId } },
+    });
+    if (!timesheet) throw new AppError('Timesheet not found', 404);
+    if (timesheet.userId === req.user!.userId) throw new AppError('You cannot reopen your own timesheet', 403);
+    if (!(await canReviewUser(req.user!, timesheet.userId))) throw new AppError('Not authorized to reopen this timesheet', 403);
+    if (timesheet.status === 'LOCKED') throw new AppError('This timesheet has been processed by payroll and cannot be reopened', 409);
+
+    await prisma.$transaction(async (tx) => {
+      const reopened = await tx.timesheet.updateMany({
+        where: { id: timesheet.id, status: 'APPROVED' },
+        data: { status: 'DRAFT', submittedAt: null, approvedAt: null },
+      });
+      if (reopened.count === 0) throw new AppError('Only an approved timesheet can be reopened', 409);
+
+      await tx.timesheetApproval.updateMany({
+        where: { timesheetId: timesheet.id, status: 'APPROVED' },
+        data: { status: 'REOPENED', comments: reason.trim(), actionAt: new Date() },
+      });
+      await tx.daySubmission.updateMany({
+        where: { timesheetId: timesheet.id, status: 'APPROVED' },
+        data: { status: 'WITHDRAWN' },
+      });
+    });
+
+    await notificationQueue.add({
+      userId: timesheet.userId,
+      type: 'TIMESHEET_REJECTED',
+      title: 'Timesheet Reopened',
+      message: `Your timesheet was reopened for correction: ${reason.trim()}`,
+      data: { timesheetId: timesheet.id },
+    });
+
+    res.json({ message: 'Timesheet reopened' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/delegate', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { toUserId, startDate, endDate, reason } = req.body;
+    const delegate = await prisma.user.findFirst({ where: { id: String(toUserId), organizationId: req.user!.organizationId }, select: { id: true } });
+    if (!delegate) throw new AppError('User not found', 404);
     const delegation = await prisma.approvalDelegation.create({
       data: {
         fromUserId: req.user!.userId,

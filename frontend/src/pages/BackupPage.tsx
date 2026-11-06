@@ -25,7 +25,7 @@ export default function BackupPage() {
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabId>('export');
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
-  const [ftpForm, setFtpForm] = useState({ host: '', port: '21', user: '', password: '', remotePath: '/backups' });
+  const [ftpForm, setFtpForm] = useState({ host: '', port: '21', user: '', password: '', remotePath: '/backups', secure: true });
   const [cloudForm, setCloudForm] = useState(() => {
     try {
       const saved = localStorage.getItem('backup_cloud_config');
@@ -259,8 +259,7 @@ export default function BackupPage() {
           {activeTab === 'ftp' && (
             <div className="space-y-4">
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-600">
-                Configure an FTP server to automatically upload backups. The server must be reachable from the backend container.
-                For full FTP upload, add <code className="bg-gray-100 px-1 rounded">basic-ftp</code> to the backend package.json.
+                Upload a compressed backup to your FTP server. The server must be publicly reachable.
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -288,6 +287,10 @@ export default function BackupPage() {
                   <input type="text" value={ftpForm.remotePath} onChange={e => setFtpForm(f => ({ ...f, remotePath: e.target.value }))}
                     className="input" placeholder="/backups" />
                 </div>
+                <label className="col-span-2 flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" checked={ftpForm.secure} onChange={e => setFtpForm(f => ({ ...f, secure: e.target.checked }))} />
+                  Use FTPS (encrypted). Without it, your password and backup travel unencrypted.
+                </label>
               </div>
               <button
                 onClick={() => ftpMutation.mutate()}

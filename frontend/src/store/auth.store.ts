@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import api from '../lib/api';
+import api, { setAccessToken } from '../lib/api';
 
 interface User {
   id: string;
@@ -20,12 +20,10 @@ interface User {
 
 interface AuthState {
   user: User | null;
-  accessToken: string | null;
   isAuthenticated: boolean;
   login: (email: string, password: string, mfaCode?: string) => Promise<{ requiresMfa?: boolean }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
-  setToken: (token: string) => void;
   completePasswordChange: (token: string) => void;
 }
 
@@ -33,21 +31,20 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       user: null,
-      accessToken: null,
       isAuthenticated: false,
 
       login: async (email, password, mfaCode) => {
         const { data } = await api.post('/auth/login', { email, password, mfaCode });
         if (data.requiresMfa) return { requiresMfa: true };
-        set({ accessToken: data.accessToken, user: data.user, isAuthenticated: true });
-        api.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
+        setAccessToken(data.accessToken);
+        set({ user: data.user, isAuthenticated: true });
         return {};
       },
 
       logout: async () => {
         try { await api.post('/auth/logout'); } catch {}
-        set({ user: null, accessToken: null, isAuthenticated: false });
-        delete api.defaults.headers.common['Authorization'];
+        setAccessToken(null);
+        set({ user: null, isAuthenticated: false });
       },
 
       refreshUser: async () => {
@@ -55,18 +52,22 @@ export const useAuthStore = create<AuthState>()(
         set({ user: data });
       },
 
-      setToken: (token) => {
-        set({ accessToken: token });
-        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      },
-
       // Changing a password ends every session, so continue on the one the server just issued
       completePasswordChange: (token) => {
         const { user } = get();
-        set({ accessToken: token, user: user ? { ...user, mustChangePassword: false } : user });
-        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        setAccessToken(token);
+        set({ user: user ? { ...user, mustChangePassword: false } : user });
       },
     }),
-    { name: 'auth-storage', partialize: (s) => ({ accessToken: s.accessToken, user: s.user, isAuthenticated: s.isAuthenticated }) }
+    {
+      name: 'auth-storage',
+      version: 1,
+      partialize: (s) => ({ user: s.user, isAuthenticated: s.isAuthenticated }),
+      // Earlier versions saved the access token here: drop it from existing browsers
+      migrate: (persisted) => {
+        const { accessToken: _dropped, ...rest } = persisted as Record<string, unknown>;
+        return rest as Pick<AuthState, 'user' | 'isAuthenticated'>;
+      },
+    }
   )
 );

@@ -588,17 +588,19 @@ describe('MFA', () => {
 
   it('locks the account after repeated wrong codes', async () => {
     const { user, secret } = await enrolled();
+    const attempt = (mfaCode: string) => request(app).post('/api/auth/login').set('X-Forwarded-For', '203.0.113.50').send({ email: user.email, password: PASSWORD, mfaCode });
     for (let i = 0; i < 5; i++) {
-      expect((await login(user.email, PASSWORD, { mfaCode: '000000' })).status).toBe(401);
+      expect((await attempt('000000')).status).toBe(401);
     }
-    expect((await login(user.email, PASSWORD, { mfaCode: codeFor(secret) })).status).toBe(423);
+    expect((await attempt(codeFor(secret))).status).toBe(423);
   });
 
   it('a correct password does not reset the failure count before MFA passes', async () => {
     const { user } = await enrolled();
-    await login(user.email, PASSWORD, { mfaCode: '000000' });
-    await login(user.email, PASSWORD);
-    expect(await redis.get(`login:attempts:${user.email}`)).toBe('1');
+    const send = (body: Record<string, unknown>) => request(app).post('/api/auth/login').set('X-Forwarded-For', '203.0.113.51').send({ email: user.email, password: PASSWORD, ...body });
+    await send({ mfaCode: '000000' });
+    await send({});
+    expect(await redis.get(`login:attempts:${user.email}:203.0.113.51`)).toBe('1');
   });
 
   it('rejects a code that has already been used', async () => {
@@ -608,12 +610,12 @@ describe('MFA', () => {
     expect((await login(user.email, PASSWORD, { mfaCode: code })).status).toBe(401);
   });
 
-  it('can require MFA for admins', async () => {
+  it('requires MFA for admins by default', async () => {
     const org = await createOrg();
     const admin = await createUser(org.id, 'HR_ADMIN');
-    process.env.REQUIRE_ADMIN_MFA = 'true';
+    delete process.env.REQUIRE_ADMIN_MFA; // Required unless explicitly turned off
     const res = await as(admin).get('/api/users');
-    delete process.env.REQUIRE_ADMIN_MFA;
+    process.env.REQUIRE_ADMIN_MFA = 'false';
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('MFA_SETUP_REQUIRED');
   });
@@ -640,25 +642,6 @@ describe('audit log', () => {
     const everything = JSON.stringify(await prisma.auditLog.findMany());
     expect(everything).not.toContain('super-secret-value');
     expect(everything).not.toContain('AKIAFAKE');
-  });
-});
-
-describe('backups', () => {
-  it('does not record an FTP connection test as a successful backup', async () => {
-    const net = await import('net');
-    const server = net.createServer(s => s.destroy());
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as { port: number }).port;
-
-    const org = await createOrg();
-    const admin = await createUser(org.id, 'SYSTEM_ADMIN');
-    const res = await as(admin).post('/api/backup/ftp').send({ host: '127.0.0.1', port, user: 'u', password: 'p' });
-    server.close();
-
-    expect(res.status).toBe(200);
-    expect(res.body.message).toContain('no backup was uploaded');
-    const log = await prisma.backupLog.findFirstOrThrow({ where: { organizationId: org.id } });
-    expect(log.status).toBe('connection-test');
   });
 });
 

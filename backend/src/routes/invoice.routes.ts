@@ -17,20 +17,50 @@ const itemSchema = z.object({
   projectId: z.string().optional(),
 });
 
-const invoiceSchema = z.object({
+const invoiceFields = {
   clientId: z.string(),
   dueDate: z.string(),
-  currency: z.string().default('USD'),
-  taxRate: z.number().min(0).max(100).default(0),
-  discount: z.number().min(0).default(0),
+  currency: z.string(),
+  taxRate: z.number().min(0).max(100),
+  discount: z.number().min(0),
   notes: z.string().optional(),
   terms: z.string().optional(),
   items: z.array(itemSchema).min(1),
+};
+
+const invoiceSchema = z.object({
+  ...invoiceFields,
+  currency: z.string().default('USD'),
+  taxRate: z.number().min(0).max(100).default(0),
+  discount: z.number().min(0).default(0),
 });
 
-const updateSchema = invoiceSchema.partial().extend({
+// No defaults here: an update that leaves a field out must keep its current value
+const updateSchema = z.object(invoiceFields).partial().extend({
   status: z.enum(['DRAFT', 'SENT', 'PAID', 'OVERDUE', 'CANCELLED']).optional(),
 });
+
+async function assertLinksInOrg(orgId: string, clientId?: string, items?: { projectId?: string }[]): Promise<void> {
+  if (clientId) {
+    const client = await prisma.client.findFirst({ where: { id: clientId, organizationId: orgId }, select: { id: true } });
+    if (!client) throw new AppError('Client not found', 404);
+  }
+  const projectIds = [...new Set((items || []).map(i => i.projectId).filter(Boolean) as string[])];
+  if (projectIds.length > 0) {
+    const found = await prisma.project.count({ where: { id: { in: projectIds }, organizationId: orgId } });
+    if (found !== projectIds.length) throw new AppError('Project not found', 404);
+  }
+}
+
+// Numbers run per organization and aren't reused after a deletion
+async function nextInvoiceNumber(orgId: string): Promise<number> {
+  const last = await prisma.invoice.findFirst({
+    where: { organizationId: orgId },
+    orderBy: { createdAt: 'desc' },
+    select: { invoiceNumber: true },
+  });
+  return (parseInt(last?.invoiceNumber.replace(/\D/g, '') || '0', 10) || 0) + 1;
+}
 
 function calcTotals(items: { quantity: number; unitPrice: number }[], taxRate: number, discount: number) {
   const subtotal = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
@@ -91,37 +121,44 @@ router.post('/', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Resp
   try {
     const data = invoiceSchema.parse(req.body);
 
-    // Auto-generate invoice number
-    const count = await prisma.invoice.count({ where: { organizationId: req.user!.organizationId } });
-    const invoiceNumber = `INV-${String(count + 1).padStart(5, '0')}`;
+    await assertLinksInOrg(req.user!.organizationId, data.clientId, data.items);
 
     const totals = calcTotals(data.items, data.taxRate, data.discount);
 
-    const invoice = await prisma.invoice.create({
-      data: {
-        organizationId: req.user!.organizationId,
-        clientId: data.clientId,
-        invoiceNumber,
-        dueDate: new Date(data.dueDate),
-        currency: data.currency,
-        taxRate: data.taxRate,
-        discount: data.discount,
-        notes: data.notes,
-        terms: data.terms,
-        createdBy: req.user!.userId,
-        ...totals,
-        items: {
-          create: data.items.map(item => ({
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            amount: item.quantity * item.unitPrice,
-            projectId: item.projectId || null,
-          })),
-        },
-      },
-      include: { client: true, items: true },
-    });
+    // Two people saving at once can pick the same number: the unique index catches it, so try the next
+    const firstNumber = await nextInvoiceNumber(req.user!.organizationId);
+    let invoice;
+    for (let attempt = 0; !invoice; attempt++) {
+      try {
+        invoice = await prisma.invoice.create({
+          data: {
+            organizationId: req.user!.organizationId,
+            clientId: data.clientId,
+            invoiceNumber: `INV-${String(firstNumber + attempt).padStart(5, '0')}`,
+            dueDate: new Date(data.dueDate),
+            currency: data.currency,
+            taxRate: data.taxRate,
+            discount: data.discount,
+            notes: data.notes,
+            terms: data.terms,
+            createdBy: req.user!.userId,
+            ...totals,
+            items: {
+              create: data.items.map(item => ({
+                description: item.description,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                amount: item.quantity * item.unitPrice,
+                projectId: item.projectId || null,
+              })),
+            },
+          },
+          include: { client: true, items: true },
+        });
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'P2002' || attempt >= 4) throw err;
+      }
+    }
 
     res.status(201).json(invoice);
   } catch (err) {
@@ -142,6 +179,7 @@ router.put('/:id', authorize(...INVOICE_ROLES), async (req: AuthRequest, res: Re
 
     const data = updateSchema.parse(req.body);
     const items = data.items;
+    await assertLinksInOrg(req.user!.organizationId, data.clientId, items);
 
     let totals = {};
     if (items) {

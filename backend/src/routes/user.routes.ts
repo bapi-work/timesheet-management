@@ -6,6 +6,7 @@ import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { generateTempPassword, revokeSessions, stripSecrets } from '../utils/sessions';
+import { canReviewUser } from '../utils/access';
 import { UserRole } from '@prisma/client';
 
 const router = Router();
@@ -109,7 +110,33 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
       },
     });
     if (!user) throw new AppError('User not found', 404);
-    res.json(stripSecrets(user));
+
+    const viewer = req.user!;
+    const safe = stripSecrets(user);
+    const isAdmin = (ADMIN_ROLES as string[]).includes(viewer.role);
+
+    // Security settings: the person themselves and HR/System Admins only
+    if (user.id === viewer.userId || isAdmin) {
+      res.json(safe);
+      return;
+    }
+
+    const { ipWhitelist, ssoId, ssoProvider, mfaEnabled, lastLoginAt, ...hr } = safe;
+    void ipWhitelist; void ssoId; void ssoProvider; void mfaEnabled; void lastLoginAt;
+    if (await canReviewUser(viewer, user.id)) {
+      res.json(hr);
+      return;
+    }
+
+    // Everyone else gets what a staff directory would show
+    const directory = {
+      id: user.id, firstName: user.firstName, lastName: user.lastName, avatarUrl: user.avatarUrl,
+      designation: user.designation, employeeId: user.employeeId,
+      department: user.department && { id: user.department.id, name: user.department.name },
+    };
+    res.json((MANAGER_ROLES as string[]).includes(viewer.role)
+      ? { ...directory, email: user.email, role: user.role, isActive: user.isActive, joinDate: user.joinDate, manager: user.manager, teamMemberships: user.teamMemberships, projectAssignments: user.projectAssignments }
+      : directory);
   } catch (err) {
     next(err);
   }
@@ -231,8 +258,7 @@ router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: R
 router.get('/:id/timesheets', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const isSelf = req.params.id === req.user!.userId;
-    const isPrivileged = (MANAGER_ROLES as string[]).includes(req.user!.role);
-    if (!isSelf && !isPrivileged) throw new AppError('Forbidden', 403);
+    if (!isSelf && !(await canReviewUser(req.user!, req.params.id))) throw new AppError('Forbidden', 403);
 
     // Ensure the target user belongs to the same organization
     const targetUser = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });

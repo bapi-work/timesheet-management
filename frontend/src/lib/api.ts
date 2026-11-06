@@ -6,16 +6,18 @@ const api = axios.create({
 });
 
 let refreshing = false;
-let refreshSubscribers: ((token: string) => void)[] = [];
+let refreshSubscribers: { resolve: (token: string) => void; reject: (err: unknown) => void }[] = [];
+
+// The access token lives in memory only, out of reach of any script reading browser storage.
+// After a reload the first request gets a 401 and a new token comes from the httpOnly refresh cookie.
+let accessToken: string | null = null;
+
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
 
 api.interceptors.request.use((config) => {
-  const stored = localStorage.getItem('auth-storage');
-  if (stored) {
-    const { state } = JSON.parse(stored);
-    if (state?.accessToken) {
-      config.headers.Authorization = `Bearer ${state.accessToken}`;
-    }
-  }
+  if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
   return config;
 });
 
@@ -29,17 +31,20 @@ api.interceptors.response.use(
     if (error.response?.status === 403 && code === 'PASSWORD_CHANGE_REQUIRED' && window.location.pathname !== '/change-password') {
       window.location.href = '/change-password';
     } else if (error.response?.status === 403 && code === 'MFA_SETUP_REQUIRED' && window.location.pathname !== '/profile') {
-      window.location.href = '/profile';
+      window.location.href = '/profile?setup=mfa';
     }
 
     // A failed sign-in is a wrong password, not an expired session
     const isSessionEndpoint = /\/auth\/(login|refresh|logout)$/.test(orig.url || '');
     if (error.response?.status === 401 && !orig._retry && !isSessionEndpoint) {
       if (refreshing) {
-        return new Promise((resolve) => {
-          refreshSubscribers.push((token) => {
-            orig.headers.Authorization = `Bearer ${token}`;
-            resolve(api(orig));
+        return new Promise((resolve, reject) => {
+          refreshSubscribers.push({
+            resolve: (token) => {
+              orig.headers.Authorization = `Bearer ${token}`;
+              resolve(api(orig));
+            },
+            reject,
           });
         });
       }
@@ -48,18 +53,15 @@ api.interceptors.response.use(
       try {
         const { data } = await api.post('/auth/refresh', undefined, { _retry: true } as never);
         const token = data.accessToken;
-        const stored = localStorage.getItem('auth-storage');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          parsed.state.accessToken = token;
-          localStorage.setItem('auth-storage', JSON.stringify(parsed));
-        }
-        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-        refreshSubscribers.forEach(cb => cb(token));
+        setAccessToken(token);
+        refreshSubscribers.forEach(s => s.resolve(token));
         refreshSubscribers = [];
         orig.headers.Authorization = `Bearer ${token}`;
         return api(orig);
-      } catch {
+      } catch (refreshError) {
+        refreshSubscribers.forEach(s => s.reject(refreshError));
+        refreshSubscribers = [];
+        setAccessToken(null);
         localStorage.removeItem('auth-storage');
         window.location.href = '/login';
       } finally {

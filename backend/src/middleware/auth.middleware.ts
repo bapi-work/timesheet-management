@@ -44,7 +44,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
         res.status(403).json({ message: 'You must change your password before continuing', code: 'PASSWORD_CHANGE_REQUIRED' });
         return;
       }
-      if (process.env.REQUIRE_ADMIN_MFA === 'true' && MFA_REQUIRED_ROLES.includes(user.role) && !user.mfaEnabled) {
+      if (process.env.REQUIRE_ADMIN_MFA !== 'false' && MFA_REQUIRED_ROLES.includes(user.role) && !user.mfaEnabled) {
         res.status(403).json({ message: 'You must enable two-factor authentication before continuing', code: 'MFA_SETUP_REQUIRED' });
         return;
       }

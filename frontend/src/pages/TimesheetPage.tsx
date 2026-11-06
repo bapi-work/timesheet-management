@@ -5,6 +5,8 @@ import { useForm } from 'react-hook-form';
 import { format, eachDayOfInterval, isWeekend, startOfWeek, endOfWeek, addWeeks, eachDayOfInterval as eachDay, parseISO } from 'date-fns';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
+import { useAuthStore } from '../store/auth.store';
+import { MANAGEMENT_ROLES, hasRole } from '../lib/roles';
 import {
   PlusIcon, TrashIcon, PaperAirplaneIcon,
   ClipboardDocumentListIcon, LockClosedIcon,
@@ -111,6 +113,7 @@ function useConfirm() {
 
 export default function TimesheetPage() {
   const { id } = useParams<{ id: string }>();
+  const currentUser = useAuthStore(s => s.user);
   const qc = useQueryClient();
   const { confirm, modal: confirmModal } = useConfirm();
   const [addingDay, setAddingDay] = useState<string | null>(null);
@@ -178,6 +181,15 @@ export default function TimesheetPage() {
     });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['timesheet', id, weekOffset] });
+
+  const reopenTimesheet = useMutation({
+    mutationFn: (reason: string) => api.post(`/approvals/timesheets/${timesheet?.id}/reopen`, { reason }),
+    onSuccess: () => {
+      toast.success('Timesheet reopened');
+      qc.invalidateQueries({ queryKey: ['timesheet'] });
+    },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Could not reopen'),
+  });
 
   const submitTimesheet = useMutation({
     mutationFn: () => api.post(`/timesheets/${timesheet?.id}/submit`),
@@ -376,7 +388,21 @@ export default function TimesheetPage() {
       {/* Approval Info (week-level) */}
       {timesheet.approvals?.length > 0 && (
         <div className="card">
-          <h3 className="font-semibold text-gray-900 mb-3">Week Approval Status</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-gray-900">Week Approval Status</h3>
+            {id && timesheet.status === 'APPROVED' && timesheet.userId !== currentUser?.id && hasRole(currentUser?.role, MANAGEMENT_ROLES) && (
+              <button
+                onClick={() => {
+                  const reason = window.prompt('Why does this timesheet need correcting? The employee will see this.');
+                  if (reason?.trim()) reopenTimesheet.mutate(reason.trim());
+                }}
+                disabled={reopenTimesheet.isPending}
+                className="btn-secondary btn-sm"
+              >
+                Reopen for correction
+              </button>
+            )}
+          </div>
           <div className="space-y-2">
             {timesheet.approvals.map((a: Record<string, unknown>) => (
               <div key={a.id as string} className="flex items-center justify-between py-2 border-b last:border-0">

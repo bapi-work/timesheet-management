@@ -20,17 +20,17 @@ const STATUS_COLORS: Record<string, string> = {
 
 const itemSchema = z.object({
   description: z.string().min(1, 'Required'),
-  quantity: z.number({ invalid_type_error: 'Required' }).positive(),
-  unitPrice: z.number({ invalid_type_error: 'Required' }).min(0),
+  quantity: z.number({ error: 'Required' }).positive(),
+  unitPrice: z.number({ error: 'Required' }).min(0),
   projectId: z.string().optional(),
 });
 
 const schema = z.object({
   clientId: z.string().min(1, 'Client required'),
   dueDate: z.string().min(1, 'Due date required'),
-  currency: z.string().default('USD'),
-  taxRate: z.number().min(0).max(100).default(0),
-  discount: z.number().min(0).default(0),
+  currency: z.string(),
+  taxRate: z.number().min(0).max(100),
+  discount: z.number().min(0),
   notes: z.string().optional(),
   terms: z.string().optional(),
   items: z.array(itemSchema).min(1, 'At least one item required'),

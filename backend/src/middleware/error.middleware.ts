@@ -30,12 +30,25 @@ export function errorHandler(
   }
 
   if (err instanceof ZodError) {
-    res.status(400).json({ message: err.errors.map(e => e.message).join('; '), errors: err.errors });
+    res.status(400).json({ message: err.issues.map(e => e.message).join('; '), errors: err.issues });
     return;
   }
 
+  // Prisma messages contain table and column names, so they never go to the client
   if (err.name === 'PrismaClientKnownRequestError') {
-    res.status(400).json({ message: 'Database operation failed', error: err.message });
+    const code = (err as Error & { code?: string }).code;
+    if (code === 'P2002') {
+      res.status(409).json({ message: 'A record with these details already exists' });
+    } else if (code === 'P2025') {
+      res.status(404).json({ message: 'Record not found' });
+    } else {
+      res.status(400).json({ message: 'Database operation failed' });
+    }
+    return;
+  }
+
+  if (err.name === 'PrismaClientValidationError' || err.name === 'MulterError') {
+    res.status(400).json({ message: 'Invalid request' });
     return;
   }
 

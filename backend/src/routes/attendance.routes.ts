@@ -103,7 +103,7 @@ router.get('/all', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Resp
     const orgUserIds = orgUsers.map(u => u.id);
 
     const where: Prisma.AttendanceWhereInput = { userId: { in: orgUserIds } };
-    if (userId) where.userId = userId as string;
+    if (userId) where.userId = orgUserIds.includes(userId as string) ? (userId as string) : { in: [] };
     if (from || to) {
       where.date = {} as Prisma.DateTimeFilter;
       if (from) (where.date as Prisma.DateTimeFilter).gte = new Date(from as string);
@@ -131,7 +131,7 @@ router.get('/team', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: R
     targetDate.setHours(0, 0, 0, 0);
 
     const subordinates = await prisma.user.findMany({
-      where: { managerId: req.user!.userId, isActive: true },
+      where: { managerId: req.user!.userId, organizationId: req.user!.organizationId, isActive: true },
       select: { id: true, firstName: true, lastName: true, employeeId: true },
     });
 

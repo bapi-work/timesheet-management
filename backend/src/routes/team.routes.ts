@@ -137,7 +137,11 @@ router.put('/:id', authorize(...TEAM_ADMIN_ROLES), async (req: AuthRequest, res:
   try {
     await assertTeamInOrg(req.params.id, req.user!.organizationId);
     const data = teamSchema.partial().parse(req.body);
-    if (data.leadId) await assertUserInOrg(data.leadId, req.user!.organizationId);
+    const orgId = req.user!.organizationId;
+    if (data.leadId) await assertUserInOrg(data.leadId, orgId);
+    if (data.departmentId && !(await prisma.department.findFirst({ where: { id: data.departmentId, organizationId: orgId } }))) throw new AppError('Department not found', 404);
+    if (data.projectId && !(await prisma.project.findFirst({ where: { id: data.projectId, organizationId: orgId } }))) throw new AppError('Project not found', 404);
+    if (data.clientId && !(await prisma.client.findFirst({ where: { id: data.clientId, organizationId: orgId } }))) throw new AppError('Client not found', 404);
     const team = await prisma.team.update({
       where: { id: req.params.id },
       data,
