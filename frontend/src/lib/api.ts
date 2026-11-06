@@ -23,7 +23,18 @@ api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const orig = error.config;
-    if (error.response?.status === 401 && !orig._retry) {
+
+    // The account has to be secured before anything else will work
+    const code = error.response?.data?.code;
+    if (error.response?.status === 403 && code === 'PASSWORD_CHANGE_REQUIRED' && window.location.pathname !== '/change-password') {
+      window.location.href = '/change-password';
+    } else if (error.response?.status === 403 && code === 'MFA_SETUP_REQUIRED' && window.location.pathname !== '/profile') {
+      window.location.href = '/profile';
+    }
+
+    // A failed sign-in is a wrong password, not an expired session
+    const isSessionEndpoint = /\/auth\/(login|refresh|logout)$/.test(orig.url || '');
+    if (error.response?.status === 401 && !orig._retry && !isSessionEndpoint) {
       if (refreshing) {
         return new Promise((resolve) => {
           refreshSubscribers.push((token) => {

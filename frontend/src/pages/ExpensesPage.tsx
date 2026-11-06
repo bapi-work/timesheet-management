@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { PlusIcon, PaperClipIcon, PencilIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import api from '../lib/api';
+import { openAttachment } from '../lib/files';
 import { useAuthStore } from '../store/auth.store';
 import { hasRole, ADMIN_ROLES, MANAGEMENT_ROLES } from '../lib/roles';
 
@@ -143,7 +144,7 @@ function ExpenseForm({ onClose, initialValues, projects, isEdit }: ExpenseFormPr
           {existingReceipt && !selectedFile && (
             <div className="flex items-center gap-2 mb-2 text-sm text-blue-600">
               <PaperClipIcon className="h-4 w-4" />
-              <a href={existingReceipt} target="_blank" rel="noreferrer" className="hover:underline">View current attachment</a>
+              <button type="button" onClick={() => openAttachment(existingReceipt)} className="hover:underline">View current attachment</button>
             </div>
           )}
           <div className="flex items-center gap-3">
@@ -343,9 +344,9 @@ export default function ExpensesPage() {
                     <div className="flex gap-1 flex-wrap">
                       {/* Edit draft (#18) */}
                       {e.receiptUrl && (
-                        <a href={e.receiptUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+                        <button type="button" onClick={() => openAttachment(e.receiptUrl!)} className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
                           <PaperClipIcon className="h-3 w-3" /> View
-                        </a>
+                        </button>
                       )}
                       {e.status === 'DRAFT' && (
                         <button

@@ -6,8 +6,10 @@ import fs from 'fs';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
-import { UserRole } from '@prisma/client';
+import { LeaveType, Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { notificationQueue } from '../services/queue.service';
+import { canReviewUser, getReviewableUserIds } from '../utils/access';
 
 const LEAVE_DOC_DIR = path.join(process.cwd(), 'uploads', 'leave-docs');
 try {
@@ -41,18 +43,49 @@ const documentUpload = multer({
 const router = Router();
 router.use(authenticate);
 
+const dateString = z.string().refine(v => !isNaN(new Date(v).getTime()), 'Invalid date');
+
+const leaveRequestSchema = z.object({
+  leaveType: z.nativeEnum(LeaveType),
+  startDate: dateString,
+  endDate: dateString,
+  reason: z.string().optional().nullable(),
+  documentUrl: z.union([z.literal(''), z.string().regex(/^\/uploads\/leave-docs\/[a-f0-9]{32}\.[a-z0-9]{2,5}$/, 'Invalid document')]).optional().nullable(),
+  dayType: z.enum(['FULL_DAY', 'HALF_DAY']).optional(),
+}).refine(d => new Date(d.endDate) >= new Date(d.startDate), { message: 'End date cannot be before start date' })
+  .refine(d => d.dayType !== 'HALF_DAY' || new Date(d.endDate).getTime() === new Date(d.startDate).getTime(), { message: 'A half day must start and end on the same date' });
+
+// Gives back days reserved when the request was created, if any were
+async function releasePending(tx: Prisma.TransactionClient, request: { userId: string; leaveType: LeaveType; startDate: Date; days: number }): Promise<void> {
+  const where = { userId_leaveType_year: { userId: request.userId, leaveType: request.leaveType, year: request.startDate.getFullYear() } };
+  const balance = await tx.leaveBalance.findUnique({ where });
+  if (balance) await tx.leaveBalance.update({ where, data: { pending: Math.max(0, balance.pending - request.days) } });
+}
+
+// Moving a request to a final status happens once, even if two reviewers click at the same time
+async function settleRequest(tx: Prisma.TransactionClient, id: string, data: Prisma.LeaveRequestUpdateManyMutationInput): Promise<void> {
+  const settled = await tx.leaveRequest.updateMany({ where: { id, status: 'PENDING' }, data });
+  if (settled.count === 0) throw new AppError('This leave request has already been decided', 409);
+}
+
+async function loadReviewableRequest(id: string, viewer: Express.User) {
+  const request = await prisma.leaveRequest.findFirst({ where: { id, user: { organizationId: viewer.organizationId } } });
+  if (!request) throw new AppError('Request not found', 404);
+  if (request.userId === viewer.userId) throw new AppError('You cannot review your own leave request', 403);
+  if (request.approverId !== viewer.userId && !(await canReviewUser(viewer, request.userId))) throw new AppError('Forbidden', 403);
+  if (request.status !== 'PENDING') throw new AppError('This leave request has already been decided', 409);
+  return request;
+}
+
 // GET /leave — used by CalendarPage and TimesheetPage to fetch leave requests for a date range
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { status, startDate, endDate } = req.query;
     const isManagerRole = (MANAGER_ROLES as string[]).includes(req.user!.role);
+    const reviewable = isManagerRole ? await getReviewableUserIds(req.user!) : [];
 
-    const where: Record<string, unknown> = {};
-    if (!isManagerRole) {
-      where.userId = req.user!.userId;
-    } else {
-      where.user = { organizationId: req.user!.organizationId };
-    }
+    const where: Record<string, unknown> = { user: { organizationId: req.user!.organizationId } };
+    if (reviewable) where.userId = { in: [...reviewable, req.user!.userId] };
     if (status) where.status = status;
     // Date overlap filter: leave overlaps [startDate, endDate] if startDate <= endDate AND endDate >= startDate
     if (startDate && endDate) {
@@ -109,10 +142,10 @@ router.post('/upload-doc', (req: AuthRequest, res: Response, next: NextFunction)
 router.get('/requests', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { status, from, to } = req.query;
-    const isManager = (ADMIN_ROLES as string[]).includes(req.user!.role) || req.user!.role === 'DEPARTMENT_MANAGER';
+    const reviewable = await getReviewableUserIds(req.user!);
 
-    const where: Record<string, unknown> = {};
-    if (!isManager) where.userId = req.user!.userId;
+    const where: Record<string, unknown> = { user: { organizationId: req.user!.organizationId } };
+    if (reviewable) where.userId = { in: [...reviewable, req.user!.userId] };
     if (status) where.status = status;
     if (from || to) {
       where.startDate = {};
@@ -136,7 +169,7 @@ router.get('/requests', async (req: AuthRequest, res: Response, next: NextFuncti
 
 router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { leaveType, startDate, endDate, reason, documentUrl, dayType } = req.body;
+    const { leaveType, startDate, endDate, reason, documentUrl, dayType } = leaveRequestSchema.parse(req.body);
 
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -198,25 +231,20 @@ router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunct
 router.post('/requests/:id/approve', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { comments } = req.body;
-    const request = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
-    if (!request) throw new AppError('Request not found', 404);
-    const canApprove = (MANAGER_ROLES as string[]).includes(req.user!.role) || request.approverId === req.user!.userId;
-    if (!canApprove) throw new AppError('Forbidden', 403);
+    const request = await loadReviewableRequest(req.params.id, req.user!);
 
     const updated = await prisma.$transaction(async (tx) => {
-      const req2 = await tx.leaveRequest.update({
-        where: { id: req.params.id },
-        data: { status: 'APPROVED', approverComments: comments, approvedAt: new Date() },
-      });
+      await settleRequest(tx, req.params.id, { status: 'APPROVED', approverComments: comments, approvedAt: new Date() });
 
       const year = request.startDate.getFullYear();
+      await releasePending(tx, request);
       await tx.leaveBalance.upsert({
         where: { userId_leaveType_year: { userId: request.userId, leaveType: request.leaveType, year } },
-        update: { used: { increment: request.days }, pending: { decrement: request.days } },
+        update: { used: { increment: request.days } },
         create: { userId: request.userId, leaveType: request.leaveType, year, entitled: 0, used: request.days },
       });
 
-      return req2;
+      return tx.leaveRequest.findUniqueOrThrow({ where: { id: req.params.id } });
     });
 
     notificationQueue.add({
@@ -236,14 +264,12 @@ router.post('/requests/:id/approve', async (req: AuthRequest, res: Response, nex
 router.post('/requests/:id/reject', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { comments } = req.body;
-    const request = await prisma.leaveRequest.findUnique({ where: { id: req.params.id } });
-    if (!request) throw new AppError('Request not found', 404);
-    const canReject = (MANAGER_ROLES as string[]).includes(req.user!.role) || request.approverId === req.user!.userId;
-    if (!canReject) throw new AppError('Forbidden', 403);
+    const request = await loadReviewableRequest(req.params.id, req.user!);
 
-    const updated = await prisma.leaveRequest.update({
-      where: { id: req.params.id },
-      data: { status: 'REJECTED', approverComments: comments },
+    const updated = await prisma.$transaction(async (tx) => {
+      await settleRequest(tx, req.params.id, { status: 'REJECTED', approverComments: comments });
+      await releasePending(tx, request);
+      return tx.leaveRequest.findUniqueOrThrow({ where: { id: req.params.id } });
     });
 
     notificationQueue.add({
@@ -267,7 +293,10 @@ router.post('/requests/:id/cancel', async (req: AuthRequest, res: Response, next
     if (request.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
     if (!['PENDING'].includes(request.status)) throw new AppError('Cannot cancel', 400);
 
-    await prisma.leaveRequest.update({ where: { id: req.params.id }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+    await prisma.$transaction(async (tx) => {
+      await settleRequest(tx, req.params.id, { status: 'CANCELLED', cancelledAt: new Date() });
+      await releasePending(tx, request);
+    });
     res.json({ message: 'Cancelled' });
   } catch (err) {
     next(err);
@@ -346,6 +375,8 @@ router.put('/balances', authorize(...ADMIN_ROLES), async (req: AuthRequest, res:
   try {
     const { userId, leaveType, year, entitled } = req.body;
     if (!userId || !leaveType || !year || entitled === undefined) throw new AppError('userId, leaveType, year, entitled are required', 400);
+    const target = await prisma.user.findFirst({ where: { id: userId, organizationId: req.user!.organizationId }, select: { id: true } });
+    if (!target) throw new AppError('User not found', 404);
     const balance = await prisma.leaveBalance.upsert({
       where: { userId_leaveType_year: { userId, leaveType, year: Number(year) } },
       update: { entitled: Number(entitled) },
@@ -382,6 +413,9 @@ router.post('/balances/bulk-entitlement', authorize(...ADMIN_ROLES), async (req:
 // HR Admin: delete leave balance record
 router.delete('/balances/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const balance = await prisma.leaveBalance.findUnique({ where: { id: req.params.id } });
+    const owner = balance && await prisma.user.findFirst({ where: { id: balance.userId, organizationId: req.user!.organizationId }, select: { id: true } });
+    if (!owner) throw new AppError('Not found', 404);
     await prisma.leaveBalance.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
   } catch (err) {

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
 if (process.env.NODE_ENV === 'production') {
@@ -5,6 +6,9 @@ if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_REFRESH_SECRET) throw new Error('JWT_REFRESH_SECRET environment variable must be set in production');
   if (process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
   if (process.env.JWT_REFRESH_SECRET.length < 32) throw new Error('JWT_REFRESH_SECRET must be at least 32 characters');
+  if (/change_me|change-this|your-jwt/i.test(process.env.JWT_SECRET + process.env.JWT_REFRESH_SECRET)) {
+    throw new Error('JWT secrets still contain a published placeholder value');
+  }
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_fallback_secret_change_in_production_min32chars';
@@ -17,6 +21,7 @@ export interface TokenPayload {
   email: string;
   role: string;
   organizationId: string;
+  sv?: number; // User.sessionVersion when issued; tokens from older versions are rejected
 }
 
 export function generateAccessToken(payload: TokenPayload): string {
@@ -24,7 +29,8 @@ export function generateAccessToken(payload: TokenPayload): string {
 }
 
 export function generateRefreshToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRES_IN } as jwt.SignOptions);
+  // jwtid keeps two sessions started in the same second from producing identical tokens
+  return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRES_IN, jwtid: crypto.randomUUID() } as jwt.SignOptions);
 }
 
 export function verifyAccessToken(token: string): TokenPayload {

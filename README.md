@@ -12,21 +12,24 @@ cp .env.example .env
 # 2. Start all services
 docker compose up -d --build
 
-# 3. Run DB migrations + seed
-docker compose exec backend npx prisma migrate deploy
-docker compose exec backend npx ts-node prisma/seed.ts
+# 3. Get the first-run admin login (migrations run automatically on startup)
+docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"
 
 # 4. Open the app
-open http://localhost:3000
+open http://localhost:3001
 ```
 
-## Default Credentials
+## First Login
 
-| Role | Email | Password |
-|------|-------|----------|
-| System Admin | admin@acme.com | Admin@123 |
-| HR Admin | hr@acme.com | HRAdmin@123 |
-| Employee | john.doe@acme.com | Employee@123 |
+On first startup with an empty database the backend creates one System Admin:
+
+- **Email:** `INITIAL_ADMIN_EMAIL` (default `admin@timesheet.local`)
+- **Password:** `INITIAL_ADMIN_PASSWORD`, or if blank, generated and printed once:
+  `docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"`
+
+You must change the password at first sign-in.
+
+Demo data for local development only: `cd backend && npm run db:seed`. It is refused in production.
 
 ## Architecture
 

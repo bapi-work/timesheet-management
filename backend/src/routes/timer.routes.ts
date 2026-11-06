@@ -1,9 +1,9 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { startOfWeek, endOfWeek } from 'date-fns';
 import prisma from '../utils/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
+import { assertDatesEditable, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
 
 const router = Router();
 router.use(authenticate);
@@ -52,13 +52,7 @@ router.post('/start', async (req: AuthRequest, res: Response, next: NextFunction
     if (existing) throw new AppError('A timer is already running. Stop it before starting a new one.', 409);
 
     const now = new Date();
-    // Find or create today's timesheet (use current week period)
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
-      include: { organization: { select: { weekStartDay: true } } },
-    });
-    const weekStart = startOfWeek(now, { weekStartsOn: (user?.organization?.weekStartDay ?? 1) as 0 | 1 });
-    const weekEnd = endOfWeek(now, { weekStartsOn: (user?.organization?.weekStartDay ?? 1) as 0 | 1 });
+    const { periodStart: weekStart, periodEnd: weekEnd } = weekPeriod(now);
 
     let timesheet = await prisma.timesheet.findFirst({
       where: {
@@ -123,6 +117,7 @@ router.post('/stop/:entryId', async (req: AuthRequest, res: Response, next: Next
     if (entry.timesheet.userId !== req.user!.userId) throw new AppError('Not authorised', 403);
     if (!entry.startTime) throw new AppError('Entry has no start time', 400);
     if (entry.endTime) throw new AppError('Timer already stopped', 400);
+    await assertDatesEditable(prisma, entry.timesheet, [entry.date]);
 
     const now = new Date();
     const diffMs = now.getTime() - entry.startTime.getTime();
@@ -130,28 +125,19 @@ router.post('/stop/:entryId', async (req: AuthRequest, res: Response, next: Next
     const netMs = Math.max(0, diffMs - breakMs);
     const hours = Math.round((netMs / (1000 * 60 * 60)) * 100) / 100;
 
-    const updated = await prisma.timesheetEntry.update({
-      where: { id: entryId },
-      data: { endTime: now, hours },
-      include: {
-        project: { select: { id: true, name: true } },
-        task: { select: { id: true, name: true } },
-        timesheet: { select: { id: true } },
-      },
-    });
-
-    // Recalculate timesheet totals
-    const allEntries = await prisma.timesheetEntry.findMany({
-      where: { timesheetId: entry.timesheetId },
-      select: { hours: true, isBillable: true, entryType: true },
-    });
-    const totalHours = allEntries.reduce((s, e) => s + e.hours, 0);
-    const billableHours = allEntries.filter(e => e.isBillable).reduce((s, e) => s + e.hours, 0);
-    const overtimeHours = allEntries.filter(e => e.entryType === 'OVERTIME').reduce((s, e) => s + e.hours, 0);
-
-    await prisma.timesheet.update({
-      where: { id: entry.timesheetId },
-      data: { totalHours, billableHours, overtimeHours },
+    const updated = await prisma.$transaction(async (tx) => {
+      await reopenForEdit(tx, entry.timesheet, [entry.date]);
+      const stopped = await tx.timesheetEntry.update({
+        where: { id: entryId },
+        data: { endTime: now, hours },
+        include: {
+          project: { select: { id: true, name: true } },
+          task: { select: { id: true, name: true } },
+          timesheet: { select: { id: true } },
+        },
+      });
+      await recalcTotals(tx, entry.timesheetId);
+      return stopped;
     });
 
     res.json(updated);

@@ -13,6 +13,7 @@ interface User {
   avatarUrl?: string;
   gender?: string;
   mfaEnabled?: boolean;
+  mustChangePassword?: boolean;
   department?: { id: string; name: string };
   organization?: { id: string; name: string; timezone: string };
 }
@@ -25,6 +26,7 @@ interface AuthState {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setToken: (token: string) => void;
+  completePasswordChange: (token: string) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -55,6 +57,13 @@ export const useAuthStore = create<AuthState>()(
 
       setToken: (token) => {
         set({ accessToken: token });
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      },
+
+      // Changing a password ends every session, so continue on the one the server just issued
+      completePasswordChange: (token) => {
+        const { user } = get();
+        set({ accessToken: token, user: user ? { ...user, mustChangePassword: false } : user });
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       },
     }),

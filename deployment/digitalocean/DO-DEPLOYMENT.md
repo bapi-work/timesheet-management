@@ -212,7 +212,7 @@ docker compose up -d --build backend frontend nginx
 
 # Run database migrations
 docker compose exec backend npx prisma migrate deploy
-docker compose exec backend npx prisma db seed
+docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"  # first-run admin login
 ```
 
 ---
@@ -287,9 +287,9 @@ EOF
 # Start all services (includes local postgres + redis)
 docker compose up -d --build
 
-# Run migrations and seed
+# Migrations run on startup; get the first-run admin login
 docker compose exec backend npx prisma migrate deploy
-docker compose exec backend npx prisma db seed
+docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"  # first-run admin login
 ```
 
 ---

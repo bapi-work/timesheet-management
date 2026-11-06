@@ -15,7 +15,7 @@ const TIMEZONES = [
 ];
 
 export default function ProfilePage() {
-  const { user, refreshUser } = useAuthStore();
+  const { user, refreshUser, completePasswordChange } = useAuthStore();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'profile' | 'security'>('profile');
   const [mfaSetup, setMfaSetup] = useState<{ secret: string; otpauthUrl: string } | null>(null);
@@ -49,6 +49,7 @@ export default function ProfilePage() {
 
   const { register: regPwd, handleSubmit: hsPwd, reset: resetPwd } = useForm();
   const { register: regMfa, handleSubmit: hsMfa } = useForm();
+  const { register: regSetup, handleSubmit: hsSetup, reset: resetSetup } = useForm();
 
   const updateMutation = useMutation({
     mutationFn: (d: Record<string, unknown>) => api.put(`/users/${user?.id}`, d),
@@ -62,13 +63,14 @@ export default function ProfilePage() {
 
   const pwdMutation = useMutation({
     mutationFn: (d: Record<string, unknown>) => api.post('/auth/change-password', d),
-    onSuccess: () => { toast.success('Password changed'); resetPwd(); },
+    onSuccess: (r) => { completePasswordChange(r.data.accessToken); toast.success('Password changed'); resetPwd(); },
     onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
   const setupMfaMutation = useMutation({
-    mutationFn: () => api.post('/auth/setup-mfa'),
-    onSuccess: (r) => setMfaSetup(r.data),
+    mutationFn: (d: Record<string, unknown>) => api.post('/auth/setup-mfa', d),
+    onSuccess: (r) => { setMfaSetup(r.data); resetSetup(); },
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed'),
   });
 
   const verifyMfaMutation = useMutation({
@@ -166,9 +168,15 @@ export default function ProfilePage() {
             </div>
 
             {!user?.mfaEnabled && !mfaSetup && (
-              <button onClick={() => setupMfaMutation.mutate()} disabled={setupMfaMutation.isPending} className="btn-secondary btn-sm">
-                Enable MFA
-              </button>
+              <form onSubmit={hsSetup(d => setupMfaMutation.mutate(d as Record<string, unknown>))} className="flex gap-3 items-end">
+                <div>
+                  <label className="label">Current Password</label>
+                  <input {...regSetup('currentPassword', { required: true })} type="password" className="input" autoComplete="current-password" />
+                </div>
+                <button type="submit" disabled={setupMfaMutation.isPending} className="btn-secondary btn-sm">
+                  Enable MFA
+                </button>
+              </form>
             )}
 
             {mfaSetup && (

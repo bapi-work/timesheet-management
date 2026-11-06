@@ -5,7 +5,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import path from 'path';
+import net from 'net';
 
 import { errorHandler } from './middleware/error.middleware';
 import { requestLogger } from './middleware/audit.middleware';
@@ -29,6 +29,7 @@ import invoiceRoutes from './routes/invoice.routes';
 import expenseRoutes from './routes/expense.routes';
 import backupRoutes from './routes/backup.routes';
 import teamRoutes from './routes/team.routes';
+import fileRoutes from './routes/file.routes';
 import prisma from './utils/prisma';
 import { register, httpMetricsMiddleware, startDbPoolMetricsPolling } from './utils/metrics';
 
@@ -51,9 +52,6 @@ app.use(morgan('combined'));
 app.use(requestLogger);
 app.use(httpMetricsMiddleware);
 
-// Serve uploaded files (receipts, leave docs, avatars) at /uploads/*
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
-
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
@@ -61,13 +59,8 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-});
-app.use('/api/auth/', authLimiter);
-
 app.use('/api/auth', authRoutes);
+app.use('/api/files', fileRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/timesheets', timesheetRoutes);
 app.use('/api/approvals', approvalRoutes);
@@ -101,10 +94,34 @@ app.get('/api/public/branding', async (_req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
+// The socket address can't be spoofed with a header, unlike req.ip
+const internalNetworks = new net.BlockList();
+internalNetworks.addSubnet('10.0.0.0', 8);
+internalNetworks.addSubnet('172.16.0.0', 12);
+internalNetworks.addSubnet('192.168.0.0', 16);
+internalNetworks.addSubnet('127.0.0.0', 8);
+internalNetworks.addAddress('::1', 'ipv6');
+
+function isInternalPeer(address = ''): boolean {
+  const ip = address.replace(/^::ffff:/, '');
+  return internalNetworks.check(ip, net.isIPv6(ip) ? 'ipv6' : 'ipv4');
+}
+
 // Prometheus scrape endpoint (see deployment/kubernetes/monitoring.yaml)
-app.get('/metrics', async (_req, res) => {
-  res.set('Content-Type', register.contentType);
-  res.end(await register.metrics());
+// Requires METRICS_TOKEN when set, otherwise only answers on the internal network
+app.get('/metrics', async (req, res, next) => {
+  try {
+    const token = process.env.METRICS_TOKEN;
+    const allowed = token ? req.headers.authorization === `Bearer ${token}` : isInternalPeer(req.socket.remoteAddress);
+    if (!allowed) {
+      res.status(404).end();
+      return;
+    }
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+  } catch (err) {
+    next(err);
+  }
 });
 startDbPoolMetricsPolling();
 

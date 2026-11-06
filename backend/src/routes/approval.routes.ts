@@ -5,94 +5,89 @@ import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { emailQueue, notificationQueue } from '../services/queue.service';
 import { timesheetApprovedTemplate, timesheetRejectedTemplate } from '../services/email.service';
+import { canReviewUser, getReviewableUserIds } from '../utils/access';
 
 const router = Router();
 router.use(authenticate);
 
+// Who may act on an approval: never the employee, always someone assigned or in scope
+async function loadActionableApproval(id: string, viewer: Express.User) {
+  const approval = await prisma.timesheetApproval.findFirst({
+    where: { id, status: 'PENDING', timesheet: { user: { organizationId: viewer.organizationId } } },
+    include: { timesheet: { include: { user: true } } },
+  });
+  if (!approval) throw new AppError('Approval not found', 404);
+  if (approval.timesheet.userId === viewer.userId) throw new AppError('You cannot review your own timesheet', 403);
+  if (approval.timesheet.status !== 'SUBMITTED') throw new AppError('This timesheet is no longer awaiting approval', 409);
+  if (approval.approverId !== viewer.userId && !(await canReviewUser(viewer, approval.timesheet.userId))) {
+    throw new AppError('Not authorized to review this timesheet', 403);
+  }
+  return approval;
+}
+
+// One decision settles the timesheet, so the other approvers' requests are closed in the same transaction
+async function decideApproval(
+  approval: { id: string; timesheetId: string },
+  decision: 'APPROVED' | 'REJECTED',
+  approverId: string,
+  comments?: string
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const settled = await tx.timesheet.updateMany({
+      where: { id: approval.timesheetId, status: 'SUBMITTED' },
+      data: decision === 'APPROVED' ? { status: 'APPROVED', approvedAt: new Date() } : { status: 'REJECTED' },
+    });
+    if (settled.count === 0) throw new AppError('This timesheet is no longer awaiting approval', 409);
+
+    await tx.timesheetApproval.update({
+      where: { id: approval.id },
+      data: { status: decision, comments, actionAt: new Date(), approverId },
+    });
+    await tx.timesheetApproval.deleteMany({
+      where: { timesheetId: approval.timesheetId, status: 'PENDING' },
+    });
+
+    if (decision === 'APPROVED') {
+      // Mark all pending/submitted day submissions as approved too
+      await tx.daySubmission.updateMany({
+        where: { timesheetId: approval.timesheetId, status: { in: ['SUBMITTED'] } },
+        data: { status: 'APPROVED' },
+      });
+    }
+  });
+}
+
+// Shared check for approving or rejecting one day
+async function loadActionableDaySubmission(id: string, viewer: Express.User) {
+  const sub = await prisma.daySubmission.findFirst({
+    where: { id, status: 'SUBMITTED', timesheet: { user: { organizationId: viewer.organizationId } } },
+    include: { timesheet: { include: { user: true } } },
+  });
+  if (!sub) throw new AppError('Day submission not found or not pending', 404);
+  if (sub.timesheet.userId === viewer.userId) throw new AppError('You cannot review your own timesheet', 403);
+  if (sub.timesheet.status === 'LOCKED') throw new AppError('This timesheet is locked', 409);
+  if (!(await canReviewUser(viewer, sub.timesheet.userId))) throw new AppError('Not authorized', 403);
+  return sub;
+}
+
 router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const role = req.user!.role;
     const userId = req.user!.userId;
-    const orgId = req.user!.organizationId;
     const { teamId } = req.query;
+    const reviewable = await getReviewableUserIds(req.user!);
 
-    // Build optional team member filter
-    let teamMemberIds: string[] | undefined;
-    if (teamId) {
-      const team = await prisma.team.findFirst({
-        where: { id: String(teamId), organizationId: orgId },
-        include: { members: { select: { userId: true } } },
-      });
-      if (team) teamMemberIds = team.members.map((m: { userId: string }) => m.userId);
-    }
-
-    // HR_ADMIN: see all pending approvals across org (their assigned + all SUBMITTED)
-    if (role === 'HR_ADMIN' || role === 'SYSTEM_ADMIN') {
-      const approvals = await prisma.timesheetApproval.findMany({
-        where: {
-          status: 'PENDING',
-          timesheet: {
-            user: { organizationId: orgId },
-            ...(teamMemberIds ? { userId: { in: teamMemberIds } } : {}),
-          },
-        },
-        include: {
-          timesheet: {
-            include: {
-              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
-              entries: { include: { project: { select: { id: true, name: true } }, task: { select: { id: true, name: true } } } },
-            },
-          },
-        },
-        orderBy: { dueDate: 'asc' },
-      });
-      return res.json(approvals);
-    }
-
-    // TEAM_LEAD: see own assigned approvals + team members' approvals
-    if (role === 'TEAM_LEAD') {
-      const ledTeams = await prisma.team.findMany({
-        where: { leadId: userId },
-        include: { members: { select: { userId: true } } },
-      });
-      const allTeamMemberIds = [...new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)))];
-      const filteredMemberIds = teamMemberIds ?? allTeamMemberIds;
-
-      const approvals = await prisma.timesheetApproval.findMany({
-        where: {
-          status: 'PENDING',
-          OR: [
-            { approverId: userId, timesheet: { ...(teamMemberIds ? { userId: { in: filteredMemberIds } } : {}) } },
-            { timesheet: { userId: { in: filteredMemberIds } } },
-          ],
-        },
-        include: {
-          timesheet: {
-            include: {
-              user: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatarUrl: true, department: { select: { name: true } }, teamMemberships: { include: { team: { select: { id: true, name: true } } } } } },
-              entries: { include: { project: { select: { id: true, name: true } }, task: { select: { id: true, name: true } } } },
-            },
-          },
-        },
-        orderBy: { dueDate: 'asc' },
-      });
-
-      // Deduplicate by timesheetId
-      const seen = new Set<string>();
-      const unique = approvals.filter(a => {
-        if (seen.has(a.timesheetId)) return false;
-        seen.add(a.timesheetId);
-        return true;
-      });
-      return res.json(unique);
-    }
-
-    // Default: only assigned approvals (scoped to manager's direct reports)
     const approvals = await prisma.timesheetApproval.findMany({
       where: {
-        approverId: userId,
         status: 'PENDING',
-        ...(teamMemberIds ? { timesheet: { userId: { in: teamMemberIds } } } : {}),
+        ...(reviewable ? { OR: [{ approverId: userId }, { timesheet: { userId: { in: reviewable } } }] } : {}),
+        timesheet: {
+          status: 'SUBMITTED',
+          userId: { not: userId },
+          user: {
+            organizationId: req.user!.organizationId,
+            ...(teamId ? { teamMemberships: { some: { teamId: String(teamId) } } } : {}),
+          },
+        },
       },
       include: {
         timesheet: {
@@ -104,7 +99,15 @@ router.get('/pending', async (req: AuthRequest, res: Response, next: NextFunctio
       },
       orderBy: { dueDate: 'asc' },
     });
-    res.json(approvals);
+
+    // A timesheet has one row per approver: show it once, preferring this viewer's own row
+    const byTimesheet = new Map<string, (typeof approvals)[number]>();
+    for (const approval of approvals) {
+      if (!byTimesheet.has(approval.timesheetId) || approval.approverId === userId) {
+        byTimesheet.set(approval.timesheetId, approval);
+      }
+    }
+    res.json([...byTimesheet.values()]);
   } catch (err) {
     next(err);
   }
@@ -141,71 +144,24 @@ router.get('/history', async (req: AuthRequest, res: Response, next: NextFunctio
 router.post('/:id/approve', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { comments } = req.body;
-    const role = req.user!.role;
-    const userId = req.user!.userId;
+    const approval = await loadActionableApproval(req.params.id, req.user!);
+    await decideApproval(approval, 'APPROVED', req.user!.userId, comments);
 
-    // Find the approval record - allow HR_ADMIN/SYSTEM_ADMIN/TEAM_LEAD to approve even without being the designated approver
-    let approval = await prisma.timesheetApproval.findFirst({
-      where: { id: req.params.id, approverId: userId, status: 'PENDING' },
-      include: { timesheet: { include: { user: { include: { manager: true } } } } },
+    const user = approval.timesheet.user;
+    const period = `${format(approval.timesheet.periodStart, 'MMM d')} - ${format(approval.timesheet.periodEnd, 'MMM d, yyyy')}`;
+
+    await emailQueue.add({
+      to: user.email,
+      subject: 'Your Timesheet Has Been Approved',
+      html: timesheetApprovedTemplate(`${user.firstName} ${user.lastName}`, period),
     });
 
-    // HR/Admin/TeamLead can approve any pending approval by ID
-    if (!approval && ['HR_ADMIN', 'SYSTEM_ADMIN', 'TEAM_LEAD'].includes(role)) {
-      approval = await prisma.timesheetApproval.findFirst({
-        where: { id: req.params.id, status: 'PENDING', timesheet: { user: { organizationId: req.user!.organizationId } } },
-        include: { timesheet: { include: { user: { include: { manager: true } } } } },
-      });
-      if (!approval) throw new AppError('Approval not found', 404);
-
-      // For TEAM_LEAD, verify the employee is in one of their teams
-      if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({
-          where: { leadId: userId },
-          include: { members: { select: { userId: true } } },
-        });
-        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
-        if (!memberIds.has(approval.timesheet.userId)) {
-          throw new AppError('Not authorized to approve this timesheet', 403);
-        }
-      }
-    }
-
-    if (!approval) throw new AppError('Approval not found', 404);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.timesheetApproval.update({
-        where: { id: req.params.id },
-        data: { status: 'APPROVED', comments, actionAt: new Date(), approverId: userId },
-      });
-
-      await tx.timesheet.update({
-        where: { id: approval!.timesheetId },
-        data: { status: 'APPROVED', approvedAt: new Date() },
-      });
-
-      // Mark all pending/submitted day submissions as approved too
-      await tx.daySubmission.updateMany({
-        where: { timesheetId: approval!.timesheetId, status: { in: ['SUBMITTED'] } },
-        data: { status: 'APPROVED' },
-      });
-
-      const user = approval!.timesheet.user;
-      const period = `${format(approval!.timesheet.periodStart, 'MMM d')} - ${format(approval!.timesheet.periodEnd, 'MMM d, yyyy')}`;
-
-      await emailQueue.add({
-        to: user.email,
-        subject: 'Your Timesheet Has Been Approved',
-        html: timesheetApprovedTemplate(`${user.firstName} ${user.lastName}`, period),
-      });
-
-      await notificationQueue.add({
-        userId: user.id,
-        type: 'TIMESHEET_APPROVED',
-        title: 'Timesheet Approved',
-        message: `Your timesheet for ${period} has been approved.`,
-        data: { timesheetId: approval!.timesheetId },
-      });
+    await notificationQueue.add({
+      userId: user.id,
+      type: 'TIMESHEET_APPROVED',
+      title: 'Timesheet Approved',
+      message: `Your timesheet for ${period} has been approved.`,
+      data: { timesheetId: approval.timesheetId },
     });
 
     res.json({ message: 'Approved' });
@@ -219,60 +175,24 @@ router.post('/:id/reject', async (req: AuthRequest, res: Response, next: NextFun
     const { comments } = req.body;
     if (!comments) throw new AppError('Rejection reason required', 400);
 
-    const role = req.user!.role;
-    const userId = req.user!.userId;
+    const approval = await loadActionableApproval(req.params.id, req.user!);
+    await decideApproval(approval, 'REJECTED', req.user!.userId, comments);
 
-    let approval = await prisma.timesheetApproval.findFirst({
-      where: { id: req.params.id, approverId: userId, status: 'PENDING' },
-      include: { timesheet: { include: { user: true } } },
+    const user = approval.timesheet.user;
+    const period = `${format(approval.timesheet.periodStart, 'MMM d')} - ${format(approval.timesheet.periodEnd, 'MMM d, yyyy')}`;
+
+    await emailQueue.add({
+      to: user.email,
+      subject: 'Your Timesheet Has Been Rejected',
+      html: timesheetRejectedTemplate(`${user.firstName} ${user.lastName}`, period, comments),
     });
 
-    if (!approval && ['HR_ADMIN', 'SYSTEM_ADMIN', 'TEAM_LEAD'].includes(role)) {
-      approval = await prisma.timesheetApproval.findFirst({
-        where: { id: req.params.id, status: 'PENDING', timesheet: { user: { organizationId: req.user!.organizationId } } },
-        include: { timesheet: { include: { user: true } } },
-      });
-      if (!approval) throw new AppError('Approval not found', 404);
-
-      if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({
-          where: { leadId: userId },
-          include: { members: { select: { userId: true } } },
-        });
-        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
-        if (!memberIds.has(approval.timesheet.userId)) throw new AppError('Not authorized', 403);
-      }
-    }
-
-    if (!approval) throw new AppError('Approval not found', 404);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.timesheetApproval.update({
-        where: { id: req.params.id },
-        data: { status: 'REJECTED', comments, actionAt: new Date(), approverId: userId },
-      });
-
-      await tx.timesheet.update({
-        where: { id: approval!.timesheetId },
-        data: { status: 'REJECTED' },
-      });
-
-      const user = approval!.timesheet.user;
-      const period = `${format(approval!.timesheet.periodStart, 'MMM d')} - ${format(approval!.timesheet.periodEnd, 'MMM d, yyyy')}`;
-
-      await emailQueue.add({
-        to: user.email,
-        subject: 'Your Timesheet Has Been Rejected',
-        html: timesheetRejectedTemplate(`${user.firstName} ${user.lastName}`, period, comments),
-      });
-
-      await notificationQueue.add({
-        userId: user.id,
-        type: 'TIMESHEET_REJECTED',
-        title: 'Timesheet Rejected',
-        message: `Your timesheet for ${period} was rejected: ${comments}`,
-        data: { timesheetId: approval!.timesheetId },
-      });
+    await notificationQueue.add({
+      userId: user.id,
+      type: 'TIMESHEET_REJECTED',
+      title: 'Timesheet Rejected',
+      message: `Your timesheet for ${period} was rejected: ${comments}`,
+      data: { timesheetId: approval.timesheetId },
     });
 
     res.json({ message: 'Rejected' });
@@ -285,50 +205,26 @@ router.post('/bulk-approve', async (req: AuthRequest, res: Response, next: NextF
   try {
     const { approvalIds, comments } = req.body as { approvalIds: string[]; comments?: string };
     if (!Array.isArray(approvalIds) || approvalIds.length === 0) throw new AppError('No IDs provided', 400);
-    const role = req.user!.role;
-    const userId = req.user!.userId;
 
-    const results = await Promise.allSettled(
-      approvalIds.map(id =>
-        prisma.$transaction(async (tx) => {
-          const where: Record<string, unknown> = { id, status: 'PENDING' };
-          if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'TEAM_LEAD'].includes(role)) {
-            where.approverId = userId;
-          }
-
-          const approval = await tx.timesheetApproval.findFirst({
-            where,
-            include: { timesheet: { include: { user: true } } },
-          });
-          if (!approval) throw new Error('Not found or unauthorized');
-
-          await tx.timesheetApproval.update({
-            where: { id },
-            data: { status: 'APPROVED', comments, actionAt: new Date(), approverId: userId },
-          });
-          await tx.timesheet.update({
-            where: { id: approval.timesheetId },
-            data: { status: 'APPROVED', approvedAt: new Date() },
-          });
-
-          await tx.daySubmission.updateMany({
-            where: { timesheetId: approval.timesheetId, status: { in: ['SUBMITTED'] } },
-            data: { status: 'APPROVED' },
-          });
-
-          await notificationQueue.add({
-            userId: approval.timesheet.userId,
-            type: 'TIMESHEET_APPROVED',
-            title: 'Timesheet Approved',
-            message: 'Your timesheet has been approved.',
-            data: { timesheetId: approval.timesheetId },
-          });
-        })
-      )
-    );
-
-    const succeeded = results.filter(r => r.status === 'fulfilled').length;
-    const failed = results.filter(r => r.status === 'rejected').length;
+    // One at a time: two rows can belong to the same timesheet, and only the first may settle it
+    let succeeded = 0;
+    let failed = 0;
+    for (const id of approvalIds) {
+      try {
+        const approval = await loadActionableApproval(String(id), req.user!);
+        await decideApproval(approval, 'APPROVED', req.user!.userId, comments);
+        await notificationQueue.add({
+          userId: approval.timesheet.userId,
+          type: 'TIMESHEET_APPROVED',
+          title: 'Timesheet Approved',
+          message: 'Your timesheet has been approved.',
+          data: { timesheetId: approval.timesheetId },
+        });
+        succeeded++;
+      } catch {
+        failed++;
+      }
+    }
     res.json({ succeeded, failed });
   } catch (err) {
     next(err);
@@ -339,29 +235,19 @@ router.post('/bulk-approve', async (req: AuthRequest, res: Response, next: NextF
 
 router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const role = req.user!.role;
-    const userId = req.user!.userId;
-    const orgId = req.user!.organizationId;
     const { teamId } = req.query;
+    const reviewable = await getReviewableUserIds(req.user!);
 
-    let teamFilterIds: string[] | undefined;
-    if (teamId) {
-      const team = await prisma.team.findFirst({ where: { id: String(teamId), organizationId: orgId }, include: { members: { select: { userId: true } } } });
-      if (team) teamFilterIds = team.members.map((m: { userId: string }) => m.userId);
-    }
-
-    let where: Record<string, unknown> = { status: 'SUBMITTED', timesheet: { user: { organizationId: orgId }, ...(teamFilterIds ? { userId: { in: teamFilterIds } } : {}) } };
-
-    if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
-      if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const allMemberIds = [...new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)))];
-        const memberIds = teamFilterIds ? allMemberIds.filter(id => teamFilterIds!.includes(id)) : allMemberIds;
-        where = { status: 'SUBMITTED', timesheet: { userId: { in: memberIds } } };
-      } else {
-        where = { status: 'SUBMITTED', timesheet: { user: { managerId: userId, organizationId: orgId }, ...(teamFilterIds ? { userId: { in: teamFilterIds } } : {}) } };
-      }
-    }
+    const where: Record<string, unknown> = {
+      status: 'SUBMITTED',
+      timesheet: {
+        userId: reviewable ? { in: reviewable } : { not: req.user!.userId },
+        user: {
+          organizationId: req.user!.organizationId,
+          ...(teamId ? { teamMemberships: { some: { teamId: String(teamId) } } } : {}),
+        },
+      },
+    };
 
     const submissions = await prisma.daySubmission.findMany({
       where,
@@ -400,21 +286,15 @@ router.get('/day-submissions/pending', async (req: AuthRequest, res: Response, n
 // ─── History: approved day submissions (#22) ─────────────────────────────────
 router.get('/day-submissions/history', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const role = req.user!.role;
-    const userId = req.user!.userId;
-    const orgId = req.user!.organizationId;
+    const reviewable = await getReviewableUserIds(req.user!);
 
-    let where: Record<string, unknown> = { status: 'APPROVED', timesheet: { user: { organizationId: orgId } } };
-
-    if (!['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role)) {
-      if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const memberIds = [...new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)))];
-        where = { status: 'APPROVED', timesheet: { userId: { in: memberIds } } };
-      } else {
-        where = { status: 'APPROVED', timesheet: { user: { managerId: userId, organizationId: orgId } } };
-      }
-    }
+    const where: Record<string, unknown> = {
+      status: 'APPROVED',
+      timesheet: {
+        userId: reviewable ? { in: reviewable } : { not: req.user!.userId },
+        user: { organizationId: req.user!.organizationId },
+      },
+    };
 
     const submissions = await prisma.daySubmission.findMany({
       where,
@@ -446,26 +326,8 @@ router.get('/day-submissions/history', async (req: AuthRequest, res: Response, n
 
 router.post('/day-submissions/:id/approve', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const role = req.user!.role;
     const userId = req.user!.userId;
-
-    const sub = await prisma.daySubmission.findFirst({
-      where: { id: req.params.id, status: 'SUBMITTED', timesheet: { user: { organizationId: req.user!.organizationId } } },
-      include: { timesheet: { include: { user: true } } },
-    });
-    if (!sub) throw new AppError('Day submission not found or not pending', 404);
-
-    // Authorise: must be manager of this user, team lead of their team, HR or System Admin
-    const isPrivileged = ['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role);
-    if (!isPrivileged) {
-      if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
-        if (!memberIds.has(sub.timesheet.userId)) throw new AppError('Not authorized', 403);
-      } else if (sub.timesheet.user.managerId !== userId) {
-        throw new AppError('Not authorized', 403);
-      }
-    }
+    const sub = await loadActionableDaySubmission(req.params.id, req.user!);
 
     await prisma.$transaction(async (tx) => {
       await tx.daySubmission.update({
@@ -512,25 +374,8 @@ router.post('/day-submissions/:id/reject', async (req: AuthRequest, res: Respons
     const { comments } = req.body;
     if (!comments) throw new AppError('Rejection reason required', 400);
 
-    const role = req.user!.role;
     const userId = req.user!.userId;
-
-    const sub = await prisma.daySubmission.findFirst({
-      where: { id: req.params.id, status: 'SUBMITTED', timesheet: { user: { organizationId: req.user!.organizationId } } },
-      include: { timesheet: { include: { user: true } } },
-    });
-    if (!sub) throw new AppError('Day submission not found or not pending', 404);
-
-    const isPrivileged = ['HR_ADMIN', 'SYSTEM_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER'].includes(role);
-    if (!isPrivileged) {
-      if (role === 'TEAM_LEAD') {
-        const ledTeams = await prisma.team.findMany({ where: { leadId: userId }, include: { members: { select: { userId: true } } } });
-        const memberIds = new Set(ledTeams.flatMap((t: { members: { userId: string }[] }) => t.members.map((m: { userId: string }) => m.userId)));
-        if (!memberIds.has(sub.timesheet.userId)) throw new AppError('Not authorized', 403);
-      } else if (sub.timesheet.user.managerId !== userId) {
-        throw new AppError('Not authorized', 403);
-      }
-    }
+    const sub = await loadActionableDaySubmission(req.params.id, req.user!);
 
     await prisma.daySubmission.update({
       where: { id: req.params.id },

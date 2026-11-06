@@ -7,6 +7,30 @@ import { AppError } from '../middleware/error.middleware';
 const router = Router();
 router.use(authenticate);
 
+// Team structure decides who approves whom, so a Team Lead can't change it: otherwise
+// they could put themselves in charge of anyone. Matches the Teams page, which they can't open.
+const TEAM_ADMIN_ROLES = MANAGER_ROLES.filter(r => r !== 'TEAM_LEAD');
+
+const teamInOrg = (id: string, orgId: string) => ({
+  id,
+  OR: [
+    { organizationId: orgId },
+    { department: { organizationId: orgId } },
+    { project: { organizationId: orgId } },
+    { client: { organizationId: orgId } },
+  ],
+});
+
+async function assertTeamInOrg(id: string, orgId: string): Promise<void> {
+  const team = await prisma.team.findFirst({ where: teamInOrg(id, orgId), select: { id: true } });
+  if (!team) throw new AppError('Team not found', 404);
+}
+
+async function assertUserInOrg(id: string, orgId: string): Promise<void> {
+  const user = await prisma.user.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
+  if (!user) throw new AppError('User not found', 404);
+}
+
 const teamSchema = z.object({
   name: z.string().min(1, 'Team name is required'),
   description: z.string().optional(),
@@ -53,8 +77,8 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
 
 router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const team = await prisma.team.findUnique({
-      where: { id: req.params.id },
+    const team = await prisma.team.findFirst({
+      where: teamInOrg(req.params.id, req.user!.organizationId),
       include: {
         department: { select: { id: true, name: true } },
         project: { select: { id: true, name: true } },
@@ -73,7 +97,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
   }
 });
 
-router.post('/', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/', authorize(...TEAM_ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = teamSchema.parse(req.body);
 
@@ -91,8 +115,10 @@ router.post('/', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Resp
       if (!cl) throw new AppError('Client not found', 404);
     }
 
+    if (data.leadId) await assertUserInOrg(data.leadId, req.user!.organizationId);
+
     const team = await prisma.team.create({
-      data,
+      data: { ...data, organizationId: req.user!.organizationId },
       include: {
         department: { select: { id: true, name: true } },
         project: { select: { id: true, name: true } },
@@ -107,9 +133,11 @@ router.post('/', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Resp
   }
 });
 
-router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.put('/:id', authorize(...TEAM_ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    await assertTeamInOrg(req.params.id, req.user!.organizationId);
     const data = teamSchema.partial().parse(req.body);
+    if (data.leadId) await assertUserInOrg(data.leadId, req.user!.organizationId);
     const team = await prisma.team.update({
       where: { id: req.params.id },
       data,
@@ -127,8 +155,9 @@ router.put('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Re
   }
 });
 
-router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id', authorize(...TEAM_ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    await assertTeamInOrg(req.params.id, req.user!.organizationId);
     await prisma.team.delete({ where: { id: req.params.id } });
     res.json({ message: 'Team deleted' });
   } catch (err) {
@@ -136,10 +165,12 @@ router.delete('/:id', authorize(...MANAGER_ROLES), async (req: AuthRequest, res:
   }
 });
 
-router.post('/:id/members', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.post('/:id/members', authorize(...TEAM_ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { userId } = req.body;
     if (!userId) throw new AppError('userId is required', 400);
+    await assertTeamInOrg(req.params.id, req.user!.organizationId);
+    await assertUserInOrg(String(userId), req.user!.organizationId);
 
     const member = await prisma.teamMember.upsert({
       where: { teamId_userId: { teamId: req.params.id, userId } },
@@ -153,8 +184,9 @@ router.post('/:id/members', authorize(...MANAGER_ROLES), async (req: AuthRequest
   }
 });
 
-router.delete('/:id/members/:userId', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+router.delete('/:id/members/:userId', authorize(...TEAM_ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    await assertTeamInOrg(req.params.id, req.user!.organizationId);
     await prisma.teamMember.delete({
       where: { teamId_userId: { teamId: req.params.id, userId: req.params.userId } },
     });

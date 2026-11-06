@@ -99,15 +99,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <p className="text-xs text-gray-600 font-semibold mb-2">Demo credentials:</p>
-            <div className="space-y-1 text-xs text-gray-600">
-              <p><span className="font-medium">Admin:</span> admin@acme.com / Admin@123</p>
-              <p><span className="font-medium">HR:</span> hr@acme.com / HRAdmin@123</p>
-              <p><span className="font-medium">Employee:</span> john.doe@acme.com / Employee@123</p>
-            </div>
-          </div>
-
           {branding.footerText && (
             <p className="text-xs text-gray-400 text-center mt-4">{branding.footerText}</p>
           )}

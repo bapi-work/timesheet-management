@@ -1,7 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { startOfWeek, endOfWeek, format, parseISO, startOfDay } from 'date-fns';
-import { Prisma } from '@prisma/client';
+import { addDays, format, parseISO, startOfDay } from 'date-fns';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import prisma from '../utils/prisma';
@@ -9,6 +8,8 @@ import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
 import { emailQueue, notificationQueue } from '../services/queue.service';
 import { approvalPendingTemplate } from '../services/email.service';
+import { canReviewUser, getReviewableUserIds } from '../utils/access';
+import { assertDatesEditable, assertWithinPeriod, loadEditState, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -35,7 +36,6 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     const fromDate = (from || startDate) as string | undefined;
     const toDate = (to || endDate) as string | undefined;
     const skip = (Number(page) - 1) * Number(limit);
-    const orgId = req.user!.organizationId;
 
     const isAdmin = ['SYSTEM_ADMIN', 'HR_ADMIN'].includes(req.user!.role);
     const isManager = ['DEPARTMENT_MANAGER', 'PROJECT_MANAGER', 'TEAM_LEAD'].includes(req.user!.role);
@@ -45,61 +45,17 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!isAdmin && !isManager) {
       where.userId = req.user!.userId;
     } else {
-      // Build the set of user IDs this viewer is allowed to see
-      let allowedIds: Set<string> | null = isAdmin ? null : new Set<string>();
-
-      if (isManager) {
-        // Direct reports
-        const directReports = await prisma.user.findMany({
-          where: { organizationId: orgId, managerId: req.user!.userId, isActive: true },
-          select: { id: true },
-        });
-        directReports.forEach(u => allowedIds!.add(u.id));
-
-        // Members of teams this user leads
-        const ledMembers = await prisma.teamMember.findMany({
-          where: { team: { leadId: req.user!.userId } },
-          select: { userId: true },
-        });
-        ledMembers.forEach(m => allowedIds!.add(m.userId));
-      }
-
-      // Intersect with teamId filter if provided
-      if (teamId) {
-        const teamMembers = await prisma.teamMember.findMany({
-          where: { teamId: teamId as string },
-          select: { userId: true },
-        });
-        const teamUids = teamMembers.map(m => m.userId);
-        allowedIds = allowedIds
-          ? new Set(teamUids.filter(id => allowedIds!.has(id)))
-          : new Set(teamUids);
-      }
-
-      // Intersect with departmentId filter if provided
-      if (departmentId) {
-        const deptUsers = await prisma.user.findMany({
-          where: { organizationId: orgId, departmentId: departmentId as string },
-          select: { id: true },
-        });
-        const deptUids = deptUsers.map(u => u.id);
-        allowedIds = allowedIds
-          ? new Set(deptUids.filter(id => allowedIds!.has(id)))
-          : new Set(deptUids);
-      }
-
-      // Apply specific userId filter (only if within allowed set)
+      const reviewable = await getReviewableUserIds(req.user!);
+      where.user = {
+        organizationId: req.user!.organizationId,
+        ...(teamId ? { teamMemberships: { some: { teamId: String(teamId) } } } : {}),
+        ...(departmentId ? { departmentId: String(departmentId) } : {}),
+      };
       if (userId) {
-        const uid = userId as string;
-        if (!allowedIds || allowedIds.has(uid)) {
-          where.userId = uid;
-        } else {
-          where.userId = { in: [] };
-        }
-      } else if (allowedIds) {
-        where.userId = { in: [...allowedIds] };
-      } else {
-        where.user = { organizationId: orgId };
+        const uid = String(userId);
+        where.userId = !reviewable || reviewable.includes(uid) ? uid : { in: [] };
+      } else if (reviewable) {
+        where.userId = { in: reviewable };
       }
     }
     if (status) {
@@ -148,8 +104,7 @@ router.get('/current', async (req: AuthRequest, res: Response, next: NextFunctio
   try {
     // Allow clients to request any specific week by passing ?week=YYYY-MM-DD
     const base = req.query.week ? new Date(req.query.week as string) : new Date();
-    const periodStart = startOfWeek(base, { weekStartsOn: 0 });
-    const periodEnd = endOfWeek(base, { weekStartsOn: 0 });
+    const { periodStart, periodEnd } = weekPeriod(base);
 
     let timesheet = await prisma.timesheet.findUnique({
       where: { userId_periodStart_periodEnd: { userId: req.user!.userId, periodStart, periodEnd } },
@@ -171,7 +126,7 @@ router.get('/current', async (req: AuthRequest, res: Response, next: NextFunctio
         data: { userId: req.user!.userId, periodStart, periodEnd },
         include: {
           entries: { include: { project: true, task: true } },
-          approvals: { include: { approver: true } },
+          approvals: { include: { approver: { select: { id: true, firstName: true, lastName: true } } } },
           daySubmissions: true,
         },
       });
@@ -239,9 +194,10 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
       },
     });
     if (!timesheet) throw new AppError('Timesheet not found', 404);
-    if (timesheet.userId !== req.user!.userId && !['SYSTEM_ADMIN', 'HR_ADMIN', 'DEPARTMENT_MANAGER', 'PROJECT_MANAGER', 'TEAM_LEAD'].includes(req.user!.role)) {
-      throw new AppError('Forbidden', 403);
-    }
+    const canView = timesheet.userId === req.user!.userId
+      || timesheet.approvals.some(a => a.approverId === req.user!.userId)
+      || await canReviewUser(req.user!, timesheet.userId);
+    if (!canView) throw new AppError('Forbidden', 403);
     res.json(timesheet);
   } catch (err) {
     next(err);
@@ -269,30 +225,15 @@ router.post('/:id/entries', async (req: AuthRequest, res: Response, next: NextFu
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet) throw new AppError('Timesheet not found', 404);
     if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (timesheet.status === 'LOCKED') {
-      throw new AppError('Cannot edit a locked timesheet', 400);
-    }
 
     const entries = Array.isArray(req.body) ? req.body : [req.body];
     const validated = entries.map(e => entrySchema.parse(e));
+    const dates = validated.map(e => new Date(e.date));
+    dates.forEach(d => assertWithinPeriod(timesheet, d));
+    await assertDatesEditable(prisma, timesheet, dates);
 
     const created = await prisma.$transaction(async (tx) => {
-      // If the timesheet was submitted but user is adding more entries, revert to DRAFT
-      if (timesheet.status === 'SUBMITTED') {
-        await tx.timesheet.update({ where: { id: req.params.id }, data: { status: 'DRAFT', submittedAt: null } });
-        await tx.timesheetApproval.deleteMany({ where: { timesheetId: req.params.id } });
-      }
-
-      // Auto-withdraw any SUBMITTED day submissions for dates being modified
-      const datesBeingAdded = [...new Set(validated.map(e => startOfDay(new Date(e.date)).toISOString()))];
-      for (const dateIso of datesBeingAdded) {
-        const daySub = await tx.daySubmission.findFirst({
-          where: { timesheetId: req.params.id, date: new Date(dateIso), status: 'SUBMITTED' },
-        });
-        if (daySub) {
-          await tx.daySubmission.update({ where: { id: daySub.id }, data: { status: 'WITHDRAWN' } });
-        }
-      }
+      await reopenForEdit(tx, timesheet, dates);
 
       const newEntries = await Promise.all(
         validated.map(e => tx.timesheetEntry.create({
@@ -328,10 +269,17 @@ router.put('/:id/entries/:entryId', async (req: AuthRequest, res: Response, next
   try {
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet || timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 404);
-    if (timesheet.status === 'LOCKED') throw new AppError('Cannot edit', 400);
+
+    const existing = await prisma.timesheetEntry.findFirst({ where: { id: req.params.entryId, timesheetId: req.params.id } });
+    if (!existing) throw new AppError('Entry not found', 404);
 
     const data = entrySchema.partial().parse(req.body);
+    const dates = [existing.date, ...(data.date ? [new Date(data.date)] : [])];
+    if (data.date) assertWithinPeriod(timesheet, new Date(data.date));
+    await assertDatesEditable(prisma, timesheet, dates);
+
     const entry = await prisma.$transaction(async (tx) => {
+      await reopenForEdit(tx, timesheet, dates);
       const updated = await tx.timesheetEntry.update({
         where: { id: req.params.entryId, timesheetId: req.params.id },
         data: {
@@ -354,19 +302,14 @@ router.delete('/:id/entries/:entryId', async (req: AuthRequest, res: Response, n
   try {
     const timesheet = await prisma.timesheet.findUnique({ where: { id: req.params.id } });
     if (!timesheet || timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (timesheet.status === 'LOCKED') throw new AppError('Cannot edit', 400);
+
+    // findFirst with timesheetId scope prevents cross-timesheet entry deletion
+    const entry = await prisma.timesheetEntry.findFirst({ where: { id: req.params.entryId, timesheetId: req.params.id } });
+    if (!entry) throw new AppError('Entry not found', 404);
+    await assertDatesEditable(prisma, timesheet, [entry.date]);
 
     await prisma.$transaction(async (tx) => {
-      // findFirst with timesheetId scope prevents cross-timesheet entry deletion
-      const entry = await tx.timesheetEntry.findFirst({ where: { id: req.params.entryId, timesheetId: req.params.id } });
-      if (!entry) throw new AppError('Entry not found', 404);
-      const entryDate = startOfDay(entry.date);
-      const daySub = await tx.daySubmission.findFirst({
-        where: { timesheetId: req.params.id, date: entryDate, status: 'SUBMITTED' },
-      });
-      if (daySub) {
-        await tx.daySubmission.update({ where: { id: daySub.id }, data: { status: 'WITHDRAWN' } });
-      }
+      await reopenForEdit(tx, timesheet, [entry.date]);
       await tx.timesheetEntry.delete({ where: { id: req.params.entryId } });
       await recalcTotals(tx, req.params.id);
     });
@@ -393,7 +336,7 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response, next: NextFun
 
     // Level 1: Direct manager
     const manager = timesheet.user.manager;
-    if (manager) {
+    if (manager && manager.id !== timesheet.userId) {
       approverIds.add(manager.id);
       approverMap.push({ id: manager.id, email: manager.email, firstName: manager.firstName, level: 1 });
     }
@@ -404,7 +347,7 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response, next: NextFun
       include: { lead: { select: { id: true, email: true, firstName: true } } },
     });
     for (const team of teams) {
-      if (team.lead && !approverIds.has(team.lead.id)) {
+      if (team.lead && team.lead.id !== timesheet.userId && !approverIds.has(team.lead.id)) {
         approverIds.add(team.lead.id);
         approverMap.push({ id: team.lead.id, email: team.lead.email, firstName: team.lead.firstName, level: 2 });
       }
@@ -416,11 +359,21 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response, next: NextFun
       select: { id: true, email: true, firstName: true },
     });
     for (const hr of hrAdmins) {
-      if (!approverIds.has(hr.id)) {
+      if (hr.id !== timesheet.userId && !approverIds.has(hr.id)) {
         approverIds.add(hr.id);
         approverMap.push({ id: hr.id, email: hr.email, firstName: hr.firstName, level: 3 });
       }
     }
+
+    // Nobody above them (for example the only HR admin): route to a System Admin
+    if (approverMap.length === 0) {
+      const sysAdmins = await prisma.user.findMany({
+        where: { organizationId: req.user!.organizationId, role: 'SYSTEM_ADMIN', isActive: true, id: { not: timesheet.userId } },
+        select: { id: true, email: true, firstName: true },
+      });
+      sysAdmins.forEach(a => approverMap.push({ ...a, level: 3 }));
+    }
+    if (approverMap.length === 0) throw new AppError('No one is available to approve this timesheet', 400);
 
     const updated = await prisma.$transaction(async (tx) => {
       const ts = await tx.timesheet.update({
@@ -513,28 +466,31 @@ router.post('/:id/copy-previous', async (req: AuthRequest, res: Response, next: 
 
     if (!prevTimesheet) throw new AppError('No previous timesheet found', 404);
 
-    const currentDiff = timesheet.periodStart.getDate() - prevStart.getDate();
-    const created = await Promise.all(
-      prevTimesheet.entries.map(e => {
-        const newDate = new Date(e.date);
-        newDate.setDate(newDate.getDate() + currentDiff);
-        return prisma.timesheetEntry.create({
+    const dates = prevTimesheet.entries.map(e => addDays(e.date, 7));
+    await assertDatesEditable(prisma, timesheet, dates);
+
+    const created = await prisma.$transaction(async (tx) => {
+      await reopenForEdit(tx, timesheet, dates);
+      const copies = await Promise.all(
+        prevTimesheet.entries.map(e => tx.timesheetEntry.create({
           data: {
             timesheetId: timesheet.id,
-            date: newDate,
+            date: addDays(e.date, 7),
             projectId: e.projectId,
             taskId: e.taskId,
             description: e.description,
+            category: e.category,
             hours: e.hours,
             isBillable: e.isBillable,
             entryType: e.entryType,
             breakMinutes: e.breakMinutes,
           },
-        });
-      })
-    );
+        }))
+      );
+      await recalcTotals(tx, timesheet.id);
+      return copies;
+    });
 
-    await recalcTotals(prisma, req.params.id);
     res.json(created);
   } catch (err) {
     next(err);
@@ -550,9 +506,8 @@ router.post('/:id/days/:date/submit', async (req: AuthRequest, res: Response, ne
     });
     if (!timesheet) throw new AppError('Timesheet not found', 404);
     if (timesheet.userId !== req.user!.userId) throw new AppError('Forbidden', 403);
-    if (timesheet.status === 'LOCKED') throw new AppError('Cannot modify a locked timesheet', 400);
-
     const date = startOfDay(parseISO(req.params.date));
+    await assertDatesEditable(prisma, timesheet, [date]);
 
     // Upsert DaySubmission
     const existing = await prisma.daySubmission.findUnique({
@@ -622,6 +577,7 @@ router.post('/:id/days/:date/withdraw', async (req: AuthRequest, res: Response, 
       where: { timesheetId_date: { timesheetId: req.params.id, date } },
     });
     if (!existing) throw new AppError('No submission found for this day', 404);
+    if (existing.status !== 'SUBMITTED') throw new AppError('Only a day awaiting approval can be withdrawn', 409);
 
     const updated = await prisma.daySubmission.update({
       where: { id: existing.id },
@@ -729,8 +685,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
       const description = String(row['description'] || row['notes'] || '').trim();
 
       const entryDay = startOfDay(date);
-      const periodStart = startOfWeek(entryDay, { weekStartsOn: 1 });
-      const periodEnd = endOfWeek(entryDay, { weekStartsOn: 1 });
+      const { periodStart, periodEnd } = weekPeriod(entryDay);
       const timesheetKey = periodStart.toISOString();
 
       validRows.push({
@@ -764,12 +719,24 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
           timesheet = await tx.timesheet.create({
             data: { userId: req.user!.userId, periodStart: weekData.periodStart, periodEnd: weekData.periodEnd },
           });
-        } else if (timesheet.status === 'LOCKED') {
-          errors.push(`Week of ${format(weekData.periodStart, 'MMM d')}: Timesheet is locked and cannot be modified`);
+        }
+
+        const state = await loadEditState(tx, timesheet.id);
+        if (timesheet.status === 'LOCKED' || state.weekApproved) {
+          errors.push(`Week of ${format(weekData.periodStart, 'MMM d')}: Timesheet is locked or approved and cannot be modified`);
           continue;
         }
 
-        for (const row of weekRows) {
+        const editableRows = weekRows.filter(row => {
+          const approved = state.approvedDays.has(startOfDay(new Date(row.entry.date)).getTime());
+          if (approved) errors.push(`${format(new Date(row.entry.date), 'MMM d')}: Day is approved and cannot be modified`);
+          return !approved;
+        });
+        if (editableRows.length === 0) continue;
+
+        await reopenForEdit(tx, timesheet, editableRows.map(r => new Date(r.entry.date)));
+
+        for (const row of editableRows) {
           await tx.timesheetEntry.create({
             data: {
               timesheetId: timesheet.id,
@@ -789,7 +756,7 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
         results.push({
           week: format(weekData.periodStart, 'MMM d, yyyy'),
           timesheetId: timesheet.id,
-          entriesAdded: weekRows.length,
+          entriesAdded: editableRows.length,
         });
       }
     });
@@ -805,13 +772,5 @@ router.post('/upload', upload.single('file'), async (req: AuthRequest, res: Resp
   }
 });
 
-
-async function recalcTotals(tx: Prisma.TransactionClient | typeof prisma, timesheetId: string): Promise<void> {
-  const entries = await tx.timesheetEntry.findMany({ where: { timesheetId } });
-  const totalHours = entries.reduce((s, e) => s + e.hours, 0);
-  const billableHours = entries.filter(e => e.isBillable).reduce((s, e) => s + e.hours, 0);
-  const overtimeHours = entries.filter(e => e.entryType === 'OVERTIME').reduce((s, e) => s + e.hours, 0);
-  await tx.timesheet.update({ where: { id: timesheetId }, data: { totalHours, billableHours, overtimeHours } });
-}
 
 export default router;

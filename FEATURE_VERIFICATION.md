@@ -15,7 +15,7 @@ This guide verifies that all features of the Timesheet Management System are wor
 1. Navigate to login page: `http://localhost:3000/login`
 2. Use default credentials:
    - Email: `admin@acme.com`
-   - Password: `Admin@123`
+   - Password: from `npm run db:seed` (local demo data, see backend/prisma/seed.ts)
 3. Verify dashboard loads
 4. Check JWT token in local storage
 

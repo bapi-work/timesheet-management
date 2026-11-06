@@ -4,9 +4,13 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    throw new Error('Refusing to create demo accounts with published passwords in production. The first-run admin is created automatically on startup.');
+  }
+
   console.log('Seeding database...');
 
-  const org = await prisma.organization.upsert({
+  const org = await prisma.organization.findFirst() ?? await prisma.organization.upsert({
     where: { code: 'ACME' },
     update: {},
     create: {

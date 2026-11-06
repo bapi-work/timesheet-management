@@ -7,6 +7,7 @@ import fs from 'fs';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
+import { canReviewUser, getReviewableUserIds } from '../utils/access';
 
 const RECEIPT_DIR = path.join(process.cwd(), 'uploads', 'receipts');
 try { fs.mkdirSync(RECEIPT_DIR, { recursive: true }); } catch { /* already exists */ }
@@ -41,11 +42,20 @@ const createSchema = z.object({
   currency: z.string().default('USD'),
   date: z.string(),
   description: z.string().min(1),
-  receiptUrl: z.string().url().optional(),
+  // An uploaded receipt, or a link to one elsewhere. Rejects javascript: and other schemes.
+  receiptUrl: z.string().regex(/^(\/uploads\/receipts\/[a-f0-9]{32}\.[a-z0-9]{2,5}|https?:\/\/\S+)$/i, 'Invalid receipt link').optional(),
   notes: z.string().optional(),
 });
 
 const updateSchema = createSchema.partial();
+
+async function loadReviewableExpense(id: string, viewer: Express.User) {
+  const expense = await prisma.expense.findFirst({ where: { id, organizationId: viewer.organizationId } });
+  if (!expense) throw new AppError('Expense not found', 404);
+  if (expense.userId === viewer.userId) throw new AppError('You cannot review your own expense', 403);
+  if (!(await canReviewUser(viewer, expense.userId))) throw new AppError('Not authorised', 403);
+  return expense;
+}
 
 // GET /api/expenses
 router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -54,36 +64,26 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const isManager = [...ADMIN_ROLES, ...MANAGER_ROLES].includes(req.user!.role as never);
 
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = { organizationId: req.user!.organizationId };
 
     // Non-managers can only see their own expenses
     if (!isManager) {
       where.userId = req.user!.userId;
-    } else if (filterUserId) {
-      where.userId = filterUserId;
-      where.user = { organizationId: req.user!.organizationId };
+      if (status) where.status = status;
     } else {
-      // Managers see org expenses but NOT other users' DRAFTs
-      where.user = { organizationId: req.user!.organizationId };
-      where.OR = [
-        { userId: req.user!.userId },          // own expenses (any status)
-        { status: { not: 'DRAFT' } },          // others' non-draft expenses
-      ];
-    }
-
-    if (status) {
-      // If an explicit status filter is chosen, apply it (overrides draft exclusion for managers)
-      if (isManager && filterUserId === undefined) {
-        // Re-apply but still restrict drafts to self
-        delete where.OR;
-        where.AND = [
-          { user: { organizationId: req.user!.organizationId } },
-          { status },
-          { OR: [{ userId: req.user!.userId }, { status: { not: 'DRAFT' } }] },
-        ];
-      } else {
-        where.status = status;
+      const reviewable = await getReviewableUserIds(req.user!);
+      if (filterUserId && filterUserId !== req.user!.userId && reviewable && !reviewable.includes(filterUserId)) {
+        where.userId = { in: [] };
+      } else if (filterUserId) {
+        where.userId = filterUserId;
+      } else if (reviewable) {
+        where.userId = { in: [...reviewable, req.user!.userId] };
       }
+      // Managers never see other users' drafts
+      where.AND = [
+        ...(status ? [{ status }] : []),
+        { OR: [{ userId: req.user!.userId }, { status: { not: 'DRAFT' } }] },
+      ];
     }
     if (category) where.category = category;
     if (projectId) where.projectId = projectId;
@@ -127,8 +127,8 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
     });
     if (!expense) throw new AppError('Expense not found', 404);
     const isOwner = expense.userId === req.user!.userId;
-    const isManager = [...ADMIN_ROLES, ...MANAGER_ROLES].includes(req.user!.role as never);
-    if (!isOwner && !isManager) throw new AppError('Not authorised', 403);
+    if (expense.organizationId !== req.user!.organizationId) throw new AppError('Expense not found', 404);
+    if (!isOwner && !(await canReviewUser(req.user!, expense.userId))) throw new AppError('Not authorised', 403);
     res.json(expense);
   } catch (err) {
     next(err);
@@ -217,8 +217,7 @@ router.post('/:id/submit', async (req: AuthRequest, res: Response, next: NextFun
 // POST /api/expenses/:id/approve
 router.post('/:id/approve', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const expense = await prisma.expense.findUnique({ where: { id: req.params.id } });
-    if (!expense) throw new AppError('Expense not found', 404);
+    const expense = await loadReviewableExpense(req.params.id, req.user!);
     if (expense.status !== 'SUBMITTED') throw new AppError('Expense must be in SUBMITTED status to approve', 400);
 
     const updated = await prisma.expense.update({
@@ -234,8 +233,7 @@ router.post('/:id/approve', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (
 // POST /api/expenses/:id/reject
 router.post('/:id/reject', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const expense = await prisma.expense.findUnique({ where: { id: req.params.id } });
-    if (!expense) throw new AppError('Expense not found', 404);
+    const expense = await loadReviewableExpense(req.params.id, req.user!);
     if (expense.status !== 'SUBMITTED') throw new AppError('Expense must be in SUBMITTED status', 400);
 
     const updated = await prisma.expense.update({
@@ -251,8 +249,7 @@ router.post('/:id/reject', authorize(...ADMIN_ROLES, ...MANAGER_ROLES), async (r
 // POST /api/expenses/:id/reimburse
 router.post('/:id/reimburse', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const expense = await prisma.expense.findUnique({ where: { id: req.params.id } });
-    if (!expense) throw new AppError('Expense not found', 404);
+    const expense = await loadReviewableExpense(req.params.id, req.user!);
     if (expense.status !== 'APPROVED') throw new AppError('Expense must be approved before reimbursement', 400);
 
     const updated = await prisma.expense.update({

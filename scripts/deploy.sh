@@ -16,6 +16,7 @@ echo "    Directory: $PROJECT_DIR"
 # Create required host directories
 mkdir -p backend/uploads/avatars
 mkdir -p backend/uploads/receipts
+mkdir -p backend/uploads/leave-docs
 mkdir -p backend/uploads/exports
 mkdir -p nginx/ssl
 mkdir -p /var/www/certbot
@@ -55,3 +56,6 @@ echo "✓ Deploy complete!"
 echo "  App running at: http://$(hostname -I | awk '{print $1}')"
 echo ""
 echo "  To enable SSL, run: bash scripts/setup-ssl.sh"
+echo ""
+echo "  First deployment? Your admin login is in the backend log:"
+echo "    docker compose logs backend | grep -A6 'FIRST-RUN ADMIN'"

@@ -15,7 +15,9 @@ type TabId = 'export' | 'restore' | 'ftp' | 'cloud';
 const defaultCloudForm = { endpoint: '', bucket: '', accessKey: '', secretKey: '', region: 'us-east-1' };
 
 function saveCloudConfig(cfg: typeof defaultCloudForm) {
-  try { localStorage.setItem('backup_cloud_config', JSON.stringify(cfg)); } catch { /* ignore */ }
+  // The secret key is never kept in the browser; it's entered for each backup
+  const { secretKey: _secret, ...remembered } = cfg;
+  try { localStorage.setItem('backup_cloud_config', JSON.stringify(remembered)); } catch { /* ignore */ }
 }
 
 export default function BackupPage() {
@@ -27,7 +29,12 @@ export default function BackupPage() {
   const [cloudForm, setCloudForm] = useState(() => {
     try {
       const saved = localStorage.getItem('backup_cloud_config');
-      if (saved) return JSON.parse(saved) as typeof defaultCloudForm;
+      if (saved) {
+        // Older versions saved the secret key here: load without it and overwrite the stored copy
+        const form = { ...defaultCloudForm, ...(JSON.parse(saved) as Partial<typeof defaultCloudForm>), secretKey: '' };
+        saveCloudConfig(form);
+        return form;
+      }
     } catch { /* ignore */ }
     return defaultCloudForm;
   });

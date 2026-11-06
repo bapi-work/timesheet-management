@@ -7,9 +7,12 @@ import * as XLSX from 'xlsx';
 const router = Router();
 router.use(authenticate);
 
-router.get('/periods', authorize(...PAYROLL_ROLES), async (_req: AuthRequest, res: Response, next: NextFunction) => {
+router.get('/periods', authorize(...PAYROLL_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const periods = await prisma.payrollPeriod.findMany({ orderBy: { startDate: 'desc' } });
+    const periods = await prisma.payrollPeriod.findMany({
+      where: { organizationId: req.user!.organizationId },
+      orderBy: { startDate: 'desc' },
+    });
     res.json(periods);
   } catch (err) {
     next(err);
@@ -20,7 +23,7 @@ router.post('/periods', authorize(...PAYROLL_ROLES), async (req: AuthRequest, re
   try {
     const { name, startDate, endDate } = req.body;
     const period = await prisma.payrollPeriod.create({
-      data: { name, startDate: new Date(startDate), endDate: new Date(endDate) },
+      data: { name, startDate: new Date(startDate), endDate: new Date(endDate), organizationId: req.user!.organizationId },
     });
     res.status(201).json(period);
   } catch (err) {
@@ -30,8 +33,11 @@ router.post('/periods', authorize(...PAYROLL_ROLES), async (req: AuthRequest, re
 
 router.post('/periods/:id/process', authorize(...PAYROLL_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const period = await prisma.payrollPeriod.findUnique({ where: { id: req.params.id } });
+    const period = await prisma.payrollPeriod.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
     if (!period) throw new AppError('Period not found', 404);
+    if (period.lockedAt) throw new AppError('This payroll period has already been processed', 409);
 
     const timesheets = await prisma.timesheet.findMany({
       where: {
@@ -49,6 +55,7 @@ router.post('/periods/:id/process', authorize(...PAYROLL_ROLES), async (req: Aut
           periodStart: { gte: period.startDate },
           periodEnd: { lte: period.endDate },
           status: 'APPROVED',
+          user: { organizationId: req.user!.organizationId },
         },
         data: { status: 'LOCKED', lockedAt: new Date() },
       }),

@@ -5,12 +5,14 @@ import bcrypt from 'bcryptjs';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
+import { generateTempPassword } from '../utils/sessions';
 
 const router = Router();
 router.use(authenticate);
 router.use(authorize(...ADMIN_ROLES)); // minimum: HR_ADMIN
 
-const upload = multer({ dest: 'uploads/imports/' });
+// Kept in memory: employee import files must never be left on disk
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.get('/organization', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -73,7 +75,7 @@ router.get('/audit-logs', async (req: AuthRequest, res: Response, next: NextFunc
     const { entity, userId, from, to, page = '1', limit = '50' } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    const where: Record<string, unknown> = { organizationId: req.user!.organizationId };
+    const where: Record<string, unknown> = { user: { organizationId: req.user!.organizationId } };
     if (entity) where.entity = entity;
     if (userId) where.userId = userId;
     if (from || to) {
@@ -103,7 +105,7 @@ router.post('/import-employees', upload.single('file'), async (req: AuthRequest,
   try {
     if (!req.file) throw new AppError('No file uploaded', 400);
 
-    const wb = XLSX.readFile(req.file.path);
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws);
 
@@ -117,7 +119,7 @@ router.post('/import-employees', upload.single('file'), async (req: AuthRequest,
           results.errors.push(`Row ${results.created + results.failed}: Invalid or missing email`);
           continue;
         }
-        const tempPassword = 'TempPass@' + Math.random().toString(36).slice(-8);
+        const tempPassword = generateTempPassword();
         const hash = await bcrypt.hash(tempPassword, 12);
         await prisma.user.create({
           data: {
@@ -127,6 +129,7 @@ router.post('/import-employees', upload.single('file'), async (req: AuthRequest,
             lastName: (row['Last Name'] || row['lastName'] || '').trim(),
             designation: (row['Designation'] || row['designation'] || '').trim() || undefined,
             passwordHash: hash,
+            mustChangePassword: true,
             organizationId: req.user!.organizationId,
           },
         });

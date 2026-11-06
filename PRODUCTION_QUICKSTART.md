@@ -119,7 +119,8 @@ docker compose up -d --build
 docker compose exec backend npx prisma migrate deploy
 
 # Seed initial data (optional)
-docker compose exec backend npx ts-node prisma/seed.ts
+# The first-run admin is created automatically on startup:
+docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"
 
 # Verify health
 curl http://localhost:4000/api/health
@@ -243,8 +244,8 @@ curl -X POST http://localhost:4000/api/test/email \
 curl -X POST http://localhost:4000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "admin@acme.com",
-    "password": "Admin@123"
+    "email": "<INITIAL_ADMIN_EMAIL>",
+    "password": "<password from the first-run log>"
   }'
 ```
 
@@ -509,7 +510,7 @@ kubectl describe pod <pod-name> -n timesheet
 # Database
 npx prisma migrate deploy
 npx prisma studio
-npx prisma db seed
+# Demo data is not for production; see README.md
 
 # Build
 npm run build   # run inside backend/ and frontend/

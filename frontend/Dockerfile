@@ -8,7 +8,7 @@ ENV VITE_WS_URL=$VITE_WS_URL
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
 RUN npm run build
 

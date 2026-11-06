@@ -5,10 +5,31 @@ import multer from 'multer';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
+import { generateTempPassword, revokeSessions, stripSecrets } from '../utils/sessions';
 import { UserRole } from '@prisma/client';
 
 const router = Router();
 router.use(authenticate);
+
+// Only a System Admin can grant System Admin, or change an account that already has it
+function assertCanManageRole(actor: Express.User, targetRole?: string, newRole?: unknown): void {
+  if (actor.role === 'SYSTEM_ADMIN') return;
+  if (targetRole === 'SYSTEM_ADMIN' || newRole === 'SYSTEM_ADMIN') {
+    throw new AppError('Only a System Admin can manage System Admin accounts', 403);
+  }
+}
+
+// Manager and department links define who can approve what, so they must stay in this org
+async function assertLinksInOrg(orgId: string, managerId?: unknown, departmentId?: unknown): Promise<void> {
+  if (managerId) {
+    const manager = await prisma.user.findFirst({ where: { id: String(managerId), organizationId: orgId }, select: { id: true } });
+    if (!manager) throw new AppError('Manager not found', 404);
+  }
+  if (departmentId) {
+    const department = await prisma.department.findFirst({ where: { id: String(departmentId), organizationId: orgId }, select: { id: true } });
+    if (!department) throw new AppError('Department not found', 404);
+  }
+}
 
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
@@ -88,8 +109,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
       },
     });
     if (!user) throw new AppError('User not found', 404);
-    const { passwordHash, mfaSecret, ...safe } = user;
-    res.json(safe);
+    res.json(stripSecrets(user));
   } catch (err) {
     next(err);
   }
@@ -98,7 +118,9 @@ router.get('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
 router.post('/', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = createUserSchema.parse(req.body);
-    const tempPassword = 'TempPass@' + Math.random().toString(36).slice(-6);
+    assertCanManageRole(req.user!, undefined, data.role);
+    await assertLinksInOrg(req.user!.organizationId, data.managerId, data.departmentId);
+    const tempPassword = generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 12);
 
     const user = await prisma.user.create({
@@ -106,14 +128,14 @@ router.post('/', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Respon
         ...data,
         organizationId: req.user!.organizationId,
         passwordHash: hash,
+        mustChangePassword: true,
         joinDate: data.joinDate ? new Date(data.joinDate) : undefined,
         departmentId: data.departmentId || undefined,
         managerId: data.managerId || undefined,
       },
     });
 
-    const { passwordHash, mfaSecret, ...safe } = user;
-    res.status(201).json({ ...safe, tempPassword });
+    res.status(201).json({ ...stripSecrets(user), tempPassword });
   } catch (err) {
     next(err);
   }
@@ -147,9 +169,17 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
     const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
     if (!target) throw new AppError('User not found', 404);
 
+    if (isAdmin) {
+      assertCanManageRole(req.user!, target.role, updates.role);
+      if (isSelf && updates.role !== undefined && updates.role !== target.role) {
+        throw new AppError('You cannot change your own role', 403);
+      }
+      await assertLinksInOrg(req.user!.organizationId, updates.managerId, updates.departmentId);
+    }
+
     const user = await prisma.user.update({ where: { id: req.params.id }, data: updates });
-    const { passwordHash, mfaSecret, ...safe } = user;
-    res.json(safe);
+    if (updates.isActive === false && target.isActive) await revokeSessions(user.id);
+    res.json(stripSecrets(user));
   } catch (err) {
     next(err);
   }
@@ -160,9 +190,10 @@ router.post('/:id/reset-password', authorize(...SYSTEM_ONLY_ROLES), async (req: 
     const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
     if (!target) throw new AppError('User not found', 404);
 
-    const newPassword = 'TempPass@' + Math.random().toString(36).slice(-8);
+    const newPassword = generateTempPassword();
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash } });
+    await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash, mustChangePassword: true } });
+    await revokeSessions(req.params.id);
     res.json({ message: 'Password reset successfully', tempPassword: newPassword });
   } catch (err) {
     next(err);
@@ -174,7 +205,8 @@ router.delete('/:id/mfa', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthReque
     const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
     if (!target) throw new AppError('User not found', 404);
 
-    await prisma.user.update({ where: { id: req.params.id }, data: { mfaEnabled: false, mfaSecret: null } });
+    await prisma.user.update({ where: { id: req.params.id }, data: { mfaEnabled: false, mfaSecret: null, mfaPendingSecret: null } });
+    await revokeSessions(req.params.id);
     res.json({ message: 'MFA disabled successfully' });
   } catch (err) {
     next(err);
@@ -183,7 +215,13 @@ router.delete('/:id/mfa', authorize(...SYSTEM_ONLY_ROLES), async (req: AuthReque
 
 router.delete('/:id', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, organizationId: req.user!.organizationId } });
+    if (!target) throw new AppError('User not found', 404);
+    assertCanManageRole(req.user!, target.role);
+    if (target.id === req.user!.userId) throw new AppError('You cannot deactivate your own account', 400);
+
     await prisma.user.update({ where: { id: req.params.id }, data: { isActive: false, exitDate: new Date() } });
+    await revokeSessions(req.params.id);
     res.json({ message: 'User deactivated' });
   } catch (err) {
     next(err);

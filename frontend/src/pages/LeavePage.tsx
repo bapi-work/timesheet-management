@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { format } from 'date-fns';
 import api from '../lib/api';
+import { openAttachment } from '../lib/files';
 import toast from 'react-hot-toast';
 import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, ArrowDownTrayIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
@@ -241,9 +242,9 @@ export default function LeavePage() {
               </p>
               {!!(req.reason) && <p className="text-xs text-gray-400 mt-0.5">{req.reason as string}</p>}
               {!!(req.documentUrl) && (
-                <a href={req.documentUrl as string} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
+                <button type="button" onClick={() => openAttachment(req.documentUrl as string)} className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
                   <PaperClipIcon className="h-3 w-3" /> View Supporting Document
-                </a>
+                </button>
               )}
               {!!(req.approverComments) && <p className="text-xs text-orange-600 mt-0.5">"{req.approverComments as string}"</p>}
             </div>

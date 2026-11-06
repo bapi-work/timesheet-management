@@ -7,6 +7,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, SYSTEM_ONLY_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
+import { stripSecrets } from '../utils/sessions';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -40,7 +41,7 @@ async function buildBackupContent(orgId: string): Promise<{ json: string; compre
     prisma.team.findMany({ where: { organizationId: orgId }, include: { members: true } }),
   ]);
 
-  const users = rawUsers.map((u) => { const { passwordHash, mfaSecret, ...rest } = u; void passwordHash; void mfaSecret; return rest; });
+  const users = rawUsers.map(stripSecrets);
 
   const backup = {
     exportedAt: new Date().toISOString(),
@@ -147,13 +148,13 @@ const ftpSchema = z.object({
   remotePath: z.string().default('/backups'),
 });
 
-// POST /api/backup/ftp — test FTP connectivity and generate backup
+// POST /api/backup/ftp — tests FTP connectivity only; no file is uploaded
 router.post('/ftp', async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { host, port, user, password, remotePath } = ftpSchema.parse(req.body);
     const orgId = req.user!.organizationId;
 
-    const { compressed, fileName } = await buildBackupContent(orgId);
+    const fileName = `backup-${orgId}-${new Date().toISOString().slice(0, 10)}.json.gz`;
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('FTP connection timeout')), 15000);
@@ -173,18 +174,15 @@ router.post('/ftp', async (req: AuthRequest, res: Response, next: NextFunction) 
         organizationId: orgId,
         createdBy: req.user!.userId,
         type: 'ftp',
-        status: 'success',
+        status: 'connection-test',
         fileName,
-        fileSizeBytes: compressed.length,
         destination,
       },
     });
 
     res.json({
-      message: 'FTP connection tested. Add basic-ftp package for full upload support.',
-      fileName,
+      message: 'FTP connection succeeded, but no backup was uploaded. FTP upload is not available yet: use Download or Cloud backup.',
       destination,
-      compressedSizeBytes: compressed.length,
     });
   } catch (err: unknown) {
     const orgId = req.user!.organizationId;

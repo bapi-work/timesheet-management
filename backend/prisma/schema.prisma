@@ -243,6 +243,9 @@ model User {
   isActive         Boolean   @default(true)
   mfaEnabled       Boolean   @default(false)
   mfaSecret        String?
+  mfaPendingSecret String?
+  mustChangePassword Boolean @default(false)
+  sessionVersion   Int       @default(0)
   timezone         String?
   ipWhitelist      String[]  @default([])
   ssoProvider      String?
@@ -613,12 +616,15 @@ model Holiday {
 
 model PayrollPeriod {
   id          String   @id @default(cuid())
+  organizationId String?
   name        String
   startDate   DateTime
   endDate     DateTime
   processedAt DateTime?
   lockedAt    DateTime?
   createdAt   DateTime @default(now())
+
+  @@index([organizationId])
 }
 
 model PayrollExport {
