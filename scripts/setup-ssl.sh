@@ -21,8 +21,9 @@ fi
 # 2. Create webroot directory
 mkdir -p /var/www/certbot
 
-# 3. Make sure nginx is running with HTTP config (no SSL yet)
+# 3. Make sure nginx is running so it can answer the domain check on port 80
 cd "$PROJECT_DIR"
+bash scripts/ensure-cert.sh
 docker compose up -d nginx
 
 echo "==> Requesting certificate via webroot method..."
@@ -47,8 +48,20 @@ echo "==> Enabling HTTPS nginx config..."
 cp "$PROJECT_DIR/nginx/nginx-ssl.conf" "$PROJECT_DIR/nginx/nginx.conf"
 docker compose restart nginx
 
-# 6. Install auto-renewal cron (daily at 3am)
-CRON_CMD="0 3 * * * certbot renew --quiet && cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem $PROJECT_DIR/nginx/ssl/fullchain.pem && cp /etc/letsencrypt/live/$DOMAIN/privkey.pem $PROJECT_DIR/nginx/ssl/privkey.pem && docker compose -f $PROJECT_DIR/docker-compose.yml restart nginx >> /var/log/certbot-renew.log 2>&1"
+# 6. Install auto-renewal: certbot runs the hook only after a certificate actually renews
+HOOK=/etc/letsencrypt/renewal-hooks/deploy/timesheet-nginx.sh
+mkdir -p "$(dirname "$HOOK")"
+cat > "$HOOK" <<EOF
+#!/bin/bash
+set -e
+cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem $PROJECT_DIR/nginx/ssl/fullchain.pem
+cp /etc/letsencrypt/live/$DOMAIN/privkey.pem $PROJECT_DIR/nginx/ssl/privkey.pem
+/usr/bin/docker exec timesheet-nginx nginx -s reload
+EOF
+chmod 700 "$HOOK"
+
+# Cron has a minimal PATH, which leaves out snap installs of certbot. Failures go to the log.
+CRON_CMD="0 3 * * * PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin certbot renew >> /var/log/certbot-renew.log 2>&1"
 ( crontab -l 2>/dev/null | grep -v certbot; echo "$CRON_CMD" ) | crontab -
 
 echo ""

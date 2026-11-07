@@ -10,3 +10,4 @@ uploads/*
 logs/
 .DS_Store
 *.log
+nginx/ssl/
