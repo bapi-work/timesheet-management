@@ -62,6 +62,15 @@ This prints the first admin's temporary password. They change it at first sign-i
 
 If an admin loses their authenticator, another System Admin in that organization can reset it from the employee's page.
 
+If nobody can sign in (forgotten password, lost authenticator or a lockout), reset from the server. This prints a new temporary password and clears failed-attempt lockouts:
+
+```bash
+docker compose exec backend node dist/scripts/reset-password.js                                   # list System Admins
+docker compose exec backend node dist/scripts/reset-password.js --email admin@example.com --reset-mfa
+```
+
+`--reset-mfa` is optional; it turns off MFA so the admin can set it up again. In `.env`, put a password containing `$` in single quotes (`'Pa$$word-123'`), otherwise Docker Compose changes it.
+
 ## Architecture
 
 ```

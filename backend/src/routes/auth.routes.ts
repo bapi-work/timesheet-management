@@ -129,8 +129,10 @@ router.post('/login', credentialLimiter, async (req: Request, res: Response, nex
       throw new AppError(`Too many failed attempts. Try again in ${minutesLeft} minute(s).`, 423);
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
+    // Case-insensitive: some accounts are stored lowercased, others as typed when they were created
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      orderBy: { createdAt: 'asc' },
       select: {
         id: true, email: true, passwordHash: true, role: true,
         organizationId: true, firstName: true, lastName: true,

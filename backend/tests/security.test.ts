@@ -57,6 +57,18 @@ describe('first-run admin', () => {
     expect((await login('gen@test.local', printed!)).status).toBe(200);
   });
 
+  it('accepts the email in any letter case', async () => {
+    process.env.INITIAL_ADMIN_EMAIL = 'First.Admin@Test.Local';
+    process.env.INITIAL_ADMIN_PASSWORD = 'First-Run-Pass1';
+    await ensureInitialAdmin();
+    delete process.env.INITIAL_ADMIN_PASSWORD;
+    expect((await login('First.Admin@Test.Local', 'First-Run-Pass1')).status).toBe(200);
+
+    const org = await createOrg('Other');
+    await createUser(org.id, 'EMPLOYEE', { email: 'Mixed.Case@test.local' });
+    expect((await login('mixed.case@TEST.local')).status).toBe(200);
+  });
+
   it('leaves an existing installation alone', async () => {
     const org = await createOrg();
     await createUser(org.id);
