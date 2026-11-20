@@ -116,7 +116,7 @@ gcloud secrets create timesheet-prod --data-file=prod.env
 docker compose up -d --build
 
 # Run database migrations
-docker compose exec backend npx prisma migrate deploy
+docker compose exec backend node_modules/.bin/prisma migrate deploy
 
 # Seed initial data (optional)
 # The first-run admin is created automatically on startup:

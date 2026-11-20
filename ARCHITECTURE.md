@@ -136,7 +136,7 @@ Security headers applied at nginx level: `X-Frame-Options`, `X-Content-Type-Opti
 3. Non-root user `nodejs` for security
 
 **Frontend** — Multi-stage:
-1. Builder stage: `npm install`, `vite build` (with `VITE_API_URL` build arg)
+1. Builder stage: `npm install`, `vite build` (`VITE_API_URL` defaults to the relative `/api`, so no domain is built in)
 2. Runner stage: `nginx:alpine` serves `dist/` as static files
 
 ### Cloud Deployment Options
@@ -438,11 +438,9 @@ JWT_REFRESH_EXPIRES_IN=7d
 # Application
 NODE_ENV=production
 PORT=4000
-FRONTEND_URL=https://your-domain.com
+DOMAIN=your-domain.com
 
 # Frontend (build-time args)
-VITE_API_URL=https://your-domain.com/api
-VITE_WS_URL=wss://your-domain.com
 ```
 
 ### Email (one provider required for notifications)

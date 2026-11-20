@@ -41,9 +41,7 @@ SMTP_FROM=noreply@yourcompany.com
 # ============================================
 NODE_ENV=development
 PORT=4000
-FRONTEND_URL=http://localhost:3000
-VITE_API_URL=http://localhost:4000/api
-VITE_WS_URL=ws://localhost:4000
+FRONTEND_URL=http://localhost:3000   # Only when running the backend outside Docker; docker compose uses DOMAIN
 
 # ============================================
 # OPTIONAL: SSO PROVIDERS
@@ -79,9 +77,7 @@ NEW_RELIC_LICENSE_KEY=
 # .env.development
 NODE_ENV=development
 PORT=4000
-FRONTEND_URL=http://localhost:3000
-VITE_API_URL=http://localhost:4000/api
-VITE_WS_URL=ws://localhost:4000
+FRONTEND_URL=http://localhost:3000   # Only when running the backend outside Docker; docker compose uses DOMAIN
 
 # Local database
 DATABASE_URL=postgresql://timesheet:timesheetpass@localhost:5433/timesheet_db
@@ -116,9 +112,7 @@ npm run dev
 # .env.staging
 NODE_ENV=staging
 PORT=4000
-FRONTEND_URL=https://staging.yourcompany.com
-VITE_API_URL=https://staging.yourcompany.com/api
-VITE_WS_URL=wss://staging.yourcompany.com
+DOMAIN=staging.yourcompany.com
 
 # Managed database (e.g., AWS RDS)
 DATABASE_URL=postgresql://staging_user:${STAGING_DB_PASSWORD}@staging-db.region.rds.amazonaws.com:5432/timesheet_db
@@ -151,9 +145,7 @@ SENTRY_DSN=${SENTRY_STAGING_DSN}
 # .env.production
 NODE_ENV=production
 PORT=4000
-FRONTEND_URL=https://timesheet.yourcompany.com
-VITE_API_URL=https://timesheet.yourcompany.com/api
-VITE_WS_URL=wss://timesheet.yourcompany.com
+DOMAIN=timesheet.yourcompany.com
 
 # Managed database with encryption
 DATABASE_URL=postgresql://prod_user:${PROD_DB_PASSWORD}@prod-db.region.rds.amazonaws.com:5432/timesheet_db
@@ -360,7 +352,7 @@ Before deployment, verify:
 - [ ] REDIS_URL is valid and accessible
 - [ ] JWT_SECRET is at least 32 characters
 - [ ] SMTP credentials are valid
-- [ ] FRONTEND_URL matches actual frontend domain
+- [ ] DOMAIN is the address users open (no https://) and its DNS points at the server
 - [ ] LOG_LEVEL is appropriate for environment
 - [ ] NODE_ENV is correct (development/staging/production)
 - [ ] Optional services (SSO, monitoring) are configured if enabled

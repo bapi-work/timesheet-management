@@ -2,22 +2,41 @@
 
 A full-stack timesheet management system for 500+ employees.
 
-## Quick Start
+## Quick Start (production server)
+
+Before you start, point your domain's DNS A record at the server, and open ports 80 and 443.
 
 ```bash
-# 1. Copy env file
+# 1. Create the settings file
 cp .env.example .env
-# Edit .env with your settings
-
-# 2. Start all services
-docker compose up -d --build
-
-# 3. Get the first-run admin login (migrations run automatically on startup)
-docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"
-
-# 4. Open the app
-open http://localhost:3001
 ```
+
+Edit `.env` and set at least these values:
+
+| Setting | Value |
+|---|---|
+| `DOMAIN` | The address users open, without `https://`, for example `timesheet.example.com` |
+| `LETSENCRYPT_EMAIL` | Email for certificate expiry warnings |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | Random values: `openssl rand -hex 24` |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | Two different random values: `openssl rand -hex 32` |
+| `NODE_ENV` | Leave as `production` |
+
+```bash
+# 2. Build and start everything
+bash scripts/deploy.sh --fresh
+
+# 3. Get a real HTTPS certificate and set up automatic renewal
+bash scripts/setup-ssl.sh
+
+# 4. Get the first-run admin login
+docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"
+```
+
+Then open `https://<your DOMAIN>`. Until step 3 has run, nginx uses a temporary certificate and browsers show a warning.
+
+The domain is only set in `.env`. The app calls its API at `/api` on whatever domain it is opened from, so the frontend doesn't need rebuilding to change domain. After changing `DOMAIN`, run `docker compose up -d` and `bash scripts/setup-ssl.sh` again.
+
+To try it on your own machine, set `DOMAIN=localhost`, run `docker compose up -d --build`, and open `https://localhost` (accept the certificate warning).
 
 ## First Login
 

@@ -21,7 +21,6 @@ mkdir -p backend/uploads/exports
 mkdir -p nginx/ssl
 mkdir -p /var/www/certbot
 chmod -R 755 backend/uploads
-bash scripts/ensure-cert.sh
 
 if [ "$FRESH" = "--fresh" ]; then
   echo "==> Fresh install: stopping and removing existing containers..."
@@ -29,7 +28,7 @@ if [ "$FRESH" = "--fresh" ]; then
 fi
 
 echo "==> Pulling latest images / building..."
-docker compose build --no-cache backend frontend
+docker compose build --no-cache backend frontend nginx
 
 echo "==> Starting services..."
 docker compose up -d

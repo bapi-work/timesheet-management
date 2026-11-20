@@ -1001,7 +1001,7 @@ git pull origin main
 docker compose up -d --build backend frontend
 
 # 3. Apply any new database migrations
-docker exec timesheet-backend npx prisma migrate deploy
+docker exec timesheet-backend node_modules/.bin/prisma migrate deploy
 
 # 4. Confirm everything is healthy
 docker compose ps

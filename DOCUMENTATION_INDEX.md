@@ -189,7 +189,7 @@
 **Steps:**
 1. Copy `.env.example` to `.env`
 2. Run: `docker compose up -d --build`
-3. Run migrations: `docker compose exec backend npx prisma migrate deploy`
+3. Run migrations: `docker compose exec backend node_modules/.bin/prisma migrate deploy`
 4. Access: http://localhost:3000
 
 **See:** [README.md](./README.md#quick-start)

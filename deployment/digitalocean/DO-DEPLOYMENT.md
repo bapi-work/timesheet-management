@@ -202,16 +202,14 @@ SMTP_USER=apikey
 SMTP_PASS=<sendgrid-api-key>
 SMTP_FROM=noreply@yourdomain.com
 
-FRONTEND_URL=https://yourdomain.com
-VITE_API_URL=https://yourdomain.com/api
-VITE_WS_URL=wss://yourdomain.com
+DOMAIN=yourdomain.com
 EOF
 
 # Build and start (skip postgres/redis — using managed services)
 docker compose up -d --build backend frontend nginx
 
 # Run database migrations
-docker compose exec backend npx prisma migrate deploy
+docker compose exec backend node_modules/.bin/prisma migrate deploy
 docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"  # first-run admin login
 ```
 
@@ -279,16 +277,14 @@ SMTP_PORT=587
 SMTP_USER=apikey
 SMTP_PASS=<sendgrid-key>
 SMTP_FROM=noreply@yourdomain.com
-FRONTEND_URL=https://yourdomain.com
-VITE_API_URL=https://yourdomain.com/api
-VITE_WS_URL=wss://yourdomain.com
+DOMAIN=yourdomain.com
 EOF
 
 # Start all services (includes local postgres + redis)
 docker compose up -d --build
 
 # Migrations run on startup; get the first-run admin login
-docker compose exec backend npx prisma migrate deploy
+docker compose exec backend node_modules/.bin/prisma migrate deploy
 docker compose logs backend | grep -A6 "FIRST-RUN ADMIN"  # first-run admin login
 ```
 

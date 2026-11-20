@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 COPY package*.json ./
@@ -8,15 +8,17 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
-RUN apk add --no-cache openssl
+RUN apk upgrade --no-cache && apk add --no-cache openssl
 
 WORKDIR /app
 RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+# npm isn't needed at runtime, and the copy bundled with Node carries known vulnerabilities
+RUN npm ci --omit=dev && npm cache clean --force \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
@@ -27,4 +29,4 @@ RUN mkdir -p uploads/avatars uploads/receipts uploads/exports uploads/imports up
 USER nodejs
 EXPOSE 4000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/index.js"]

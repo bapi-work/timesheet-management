@@ -53,7 +53,7 @@
 ### Application Configuration
 - [ ] NODE_ENV set to "production"
 - [ ] PORT configured correctly
-- [ ] FRONTEND_URL matches production domain
+- [ ] DOMAIN in .env is the production domain and its DNS points at the server
 - [ ] API_URL matches production domain
 - [ ] WebSocket URL uses wss:// protocol
 - [ ] Compression enabled

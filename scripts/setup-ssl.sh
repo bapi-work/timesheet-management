@@ -1,13 +1,20 @@
 #!/bin/bash
-# SSL Certificate Setup Script for ts-dev.digile.com
-# Run this ONCE on the production server after the app is running on port 80.
-# Usage: bash scripts/setup-ssl.sh your@email.com ts-dev.digile.com
+# Gets a Let's Encrypt certificate and sets up automatic renewal.
+# Run this ONCE on the production server after the app is running and DOMAIN points to it.
+# Usage: bash scripts/setup-ssl.sh                         (uses LETSENCRYPT_EMAIL and DOMAIN from .env)
+#        bash scripts/setup-ssl.sh you@example.com timesheet.example.com
 
 set -e
 
-EMAIL="${1:-bapiwrk@gmail.com}"
-DOMAIN="${2:-ts-dev.digile.com}"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+env_value() { grep -E "^$1=" "$PROJECT_DIR/.env" 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"'\r"; }
+
+EMAIL="${1:-$(env_value LETSENCRYPT_EMAIL)}"
+DOMAIN="${2:-$(env_value DOMAIN)}"
+if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ]; then
+  echo "Set DOMAIN and LETSENCRYPT_EMAIL in .env, or run: bash scripts/setup-ssl.sh you@example.com timesheet.example.com"
+  exit 1
+fi
 
 echo "==> Setting up SSL for $DOMAIN"
 
@@ -23,7 +30,6 @@ mkdir -p /var/www/certbot
 
 # 3. Make sure nginx is running so it can answer the domain check on port 80
 cd "$PROJECT_DIR"
-bash scripts/ensure-cert.sh
 docker compose up -d nginx
 
 echo "==> Requesting certificate via webroot method..."
