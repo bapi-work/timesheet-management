@@ -8,6 +8,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   DRAFT:       { label: 'Draft',       cls: 'badge-gray' },
   IN_REVIEW:   { label: 'In Review',   cls: 'badge-blue' },
   SUBMITTED:   { label: 'Submitted',   cls: 'badge-blue' },
+  PART_APPROVED: { label: 'Partly Approved', cls: 'badge-green' },
   APPROVED:    { label: 'Approved',    cls: 'badge-green' },
   REJECTED:    { label: 'Rejected',    cls: 'badge-red' },
   LOCKED:      { label: 'Locked',      cls: 'badge-purple' },

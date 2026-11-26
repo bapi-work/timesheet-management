@@ -137,12 +137,12 @@ export const DISPLAY_STATUS_SELECT = {
   entries: { select: { date: true } },
 } satisfies Prisma.TimesheetSelect;
 
-export type DisplayStatus = 'DRAFT' | 'IN_REVIEW' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'LOCKED';
+export type DisplayStatus = 'DRAFT' | 'IN_REVIEW' | 'SUBMITTED' | 'PART_APPROVED' | 'APPROVED' | 'REJECTED' | 'LOCKED';
 
 /**
  * The status shown on every screen. Submitting a day doesn't change the stored status, so it has
  * to be worked out from both. IN_REVIEW means some days are awaiting approval; SUBMITTED means
- * the whole week is.
+ * the whole week is. PART_APPROVED means some days are approved and the rest not yet submitted.
  */
 export function displayStatus(timesheet: {
   status: string;
@@ -160,7 +160,18 @@ export function displayStatus(timesheet: {
   if (loggedDays.includes('REJECTED')) return 'REJECTED';
   if (loggedDays.includes('SUBMITTED')) return 'IN_REVIEW';
   if (status === 'REJECTED') return 'REJECTED';
-  return loggedDays.every(s => s === 'APPROVED') ? 'APPROVED' : 'DRAFT';
+  if (loggedDays.every(s => s === 'APPROVED')) return 'APPROVED';
+  return loggedDays.includes('APPROVED') ? 'PART_APPROVED' : 'DRAFT';
+}
+
+// When the timesheet, or the latest of its days, was sent for approval
+export function lastSubmittedAt(timesheet: {
+  submittedAt: Date | null;
+  daySubmissions: { status: string; submittedAt: Date }[];
+}): Date | null {
+  const days = timesheet.daySubmissions.filter(d => d.status === 'SUBMITTED' || d.status === 'APPROVED').map(d => d.submittedAt);
+  const all = [timesheet.submittedAt, ...days].filter((d): d is Date => !!d);
+  return all.length ? new Date(Math.max(...all.map(d => d.getTime()))) : null;
 }
 
 export async function loadEditState(db: Db, timesheetId: string) {

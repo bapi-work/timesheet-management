@@ -8,8 +8,8 @@ import { hasRole, ADMIN_ROLES } from '../lib/roles';
 import { formatDay, formatPeriod, refreshTimesheets, timesheetStatus } from '../lib/timesheet';
 import toast from 'react-hot-toast';
 
-const VALID_STATUSES = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
-const MANAGER_STATUSES = ['', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
+// Submitted includes weeks with days in review; Approved includes partly approved weeks
+const STATUS_TABS = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
 
 type UploadResult = {
   success: boolean;
@@ -204,7 +204,7 @@ export default function TimesheetListPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 items-center">
-        {(isManager ? MANAGER_STATUSES : VALID_STATUSES).map(s => (
+        {STATUS_TABS.map(s => (
           <button
             key={s}
             onClick={() => { setStatus(s); setPage(1); }}
@@ -212,7 +212,7 @@ export default function TimesheetListPage() {
               status === s ? 'bg-primary-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            {s ? timesheetStatus(s).label : isManager ? 'All (excl. Drafts)' : 'All'}
+            {s ? timesheetStatus(s).label : 'All'}
           </button>
         ))}
 
@@ -277,7 +277,7 @@ export default function TimesheetListPage() {
             ) : (data?.timesheets || []).length === 0 ? (
               <tr>
                 <td colSpan={isAdmin ? 7 : 6} className="td text-center text-gray-400 py-10">
-                  {status ? `No ${status.toLowerCase()} timesheets found` : 'No timesheets found'}
+                  {status ? `No ${timesheetStatus(status).label.toLowerCase()} timesheets found` : 'No timesheets found'}
                 </td>
               </tr>
             ) : (data?.timesheets || []).map((ts: Record<string, unknown>) => {
@@ -300,7 +300,7 @@ export default function TimesheetListPage() {
                     <span className={shown.cls}>{shown.label}</span>
                   </td>
                   <td className="td text-gray-400 text-xs">
-                    {ts.submittedAt ? formatDay(ts.submittedAt as string) : '—'}
+                    {ts.lastSubmittedAt ? formatDay(ts.lastSubmittedAt as string) : '—'}
                   </td>
                   <td className="td">
                     <div className="flex items-center gap-2">

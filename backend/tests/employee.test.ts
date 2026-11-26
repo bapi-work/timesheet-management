@@ -124,7 +124,7 @@ describe('timesheet status', () => {
 
     await submitDay(emp, sheet.id, WED);
     await review(manager, sheet.id, 'approve');
-    expect(await statuses(emp, sheet.id)).toEqual(all('DRAFT')); // Thursday still has to be submitted
+    expect(await statuses(emp, sheet.id)).toEqual(all('PART_APPROVED')); // Thursday still has to be submitted
 
     await submitDay(emp, sheet.id, THU);
     await review(manager, sheet.id, 'approve');
@@ -138,7 +138,7 @@ describe('timesheet status', () => {
     expect(await statuses(emp, sheet.id)).toEqual(['SUBMITTED', 'SUBMITTED', 'SUBMITTED']);
 
     const base = { approvals: [], entries: [{ date: new Date(WED) }, { date: new Date(THU) }] };
-    expect(displayStatus({ ...base, status: 'SUBMITTED', daySubmissions: [{ date: new Date(WED), status: 'APPROVED' }] })).toBe('DRAFT');
+    expect(displayStatus({ ...base, status: 'SUBMITTED', daySubmissions: [{ date: new Date(WED), status: 'APPROVED' }] })).toBe('PART_APPROVED');
   });
 
   it('decides which history tab a timesheet is under', async () => {
@@ -146,7 +146,7 @@ describe('timesheet status', () => {
     const sheet = await sheetWith(emp, WED);
     const tabs = async () => Object.fromEntries(await Promise.all(['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED'].map(async s => [s, (await tab(emp, s)).length])));
     expect(await tabs()).toEqual({ DRAFT: 1, SUBMITTED: 0, APPROVED: 0, REJECTED: 0 });
-    expect((await as(manager).get('/api/timesheets')).body.total).toBe(0);
+    expect((await as(manager).get('/api/timesheets')).body.total).toBe(1);
 
     await submitDay(emp, sheet.id, WED);
     expect(await tabs()).toEqual({ DRAFT: 0, SUBMITTED: 1, APPROVED: 0, REJECTED: 0 });
@@ -158,6 +158,21 @@ describe('timesheet status', () => {
     await submitDay(emp, sheet.id, WED);
     await review(manager, sheet.id, 'approve');
     expect(await tabs()).toEqual({ DRAFT: 0, SUBMITTED: 0, APPROVED: 1, REJECTED: 0 });
+  });
+
+  it('shows admins every timesheet with hours, with when its days were submitted', async () => {
+    const { org, emp, manager } = await setup();
+    const admin = await createUser(org.id, 'SYSTEM_ADMIN');
+    const draft = await sheetWith(emp, '2026-02-04');
+    const partly = await sheetWith(emp, WED, THU);
+    await submitDay(emp, partly.id, WED);
+    await review(manager, partly.id, 'approve');
+    const list = async (q = '') => (await as(admin).get(`/api/timesheets${q}`)).body.timesheets as { id: string; displayStatus: string; lastSubmittedAt: string | null }[];
+
+    const all = await list();
+    expect(all.map(t => [t.id, t.displayStatus, !!t.lastSubmittedAt])).toEqual([[partly.id, 'PART_APPROVED', true], [draft.id, 'DRAFT', false]]);
+    expect((await list('?status=DRAFT')).map(t => t.id)).toEqual([draft.id]);
+    expect((await list('?status=APPROVED')).map(t => t.id)).toEqual([partly.id]);
   });
 
   it('pages filtered results correctly', async () => {

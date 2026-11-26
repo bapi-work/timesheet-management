@@ -11,7 +11,7 @@ import { approvalPendingTemplate } from '../services/email.service';
 import { canReviewUser, getReviewableUserIds } from '../utils/access';
 import {
   assertDatesEditable, assertEntryLinksInOrg, assertNotFuture, assertPeriodCurrent, assertWithinPeriod, clearEmptyDays, dayKey, displayStatus,
-  DISPLAY_STATUS_SELECT, EMPTY_DRAFT, getOrCreateTimesheet, loadEditState, parseDay, recalcTotals, reopenForEdit, resolvePeriod,
+  DISPLAY_STATUS_SELECT, EMPTY_DRAFT, getOrCreateTimesheet, lastSubmittedAt, loadEditState, parseDay, recalcTotals, reopenForEdit, resolvePeriod,
   todayFor, utcDay,
 } from '../utils/timesheet-rules';
 import { Prisma, TimesheetStatus } from '@prisma/client';
@@ -86,11 +86,9 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
       matches = shown => shown === 'DRAFT';
     } else if (status) {
       where.OR = [{ status: status as TimesheetStatus }, maybeByDays];
-      matches = shown => shown === status || (status === 'SUBMITTED' && shown === 'IN_REVIEW');
-    } else if (!ownOnly) {
-      // Admins/managers don't need to see employee drafts by default
-      where.OR = [{ status: { not: 'DRAFT' } }, maybeByDays];
-      matches = shown => shown !== 'DRAFT';
+      matches = shown => shown === status
+        || (status === 'SUBMITTED' && shown === 'IN_REVIEW')
+        || (status === 'APPROVED' && shown === 'PART_APPROVED');
     }
     if (fromDate || toDate) {
       where.periodStart = {};
@@ -130,7 +128,7 @@ router.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
     });
 
     res.json({
-      timesheets: timesheets.map(t => ({ ...t, displayStatus: displayStatus(t) })),
+      timesheets: timesheets.map(t => ({ ...t, displayStatus: displayStatus(t), lastSubmittedAt: lastSubmittedAt(t) })),
       total, page: Number(page), limit: Number(limit),
     });
   } catch (err) {
