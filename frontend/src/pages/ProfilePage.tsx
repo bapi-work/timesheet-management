@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../store/auth.store';
 import api from '../lib/api';
+import { validatePhone } from '../lib/timesheet';
 import toast from 'react-hot-toast';
 import { ShieldCheckIcon, KeyIcon } from '@heroicons/react/24/outline';
 
@@ -29,7 +30,7 @@ export default function ProfilePage() {
     queryFn: () => api.get('/auth/me').then(r => r.data),
   });
 
-  const { register, handleSubmit, reset } = useForm({
+  const { register, handleSubmit, reset, formState: { errors } } = useForm({
     defaultValues: {
       firstName: user?.firstName || '',
       lastName: user?.lastName || '',
@@ -132,7 +133,8 @@ export default function ProfilePage() {
             </div>
             <div>
               <label className="label">Phone</label>
-              <input {...register('phone')} className="input" type="tel" placeholder="+1 555 000 0000" />
+              <input {...register('phone', { validate: validatePhone })} className={`input ${errors.phone ? 'input-error' : ''}`} type="tel" placeholder="+1 555 000 0000" />
+              {errors.phone && <p className="error-msg">{errors.phone.message}</p>}
             </div>
             <div>
               <label className="label">Timezone</label>

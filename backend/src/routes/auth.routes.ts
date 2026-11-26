@@ -334,7 +334,7 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response, next: Ne
       include: {
         department: { select: { id: true, name: true } },
         manager: { select: { id: true, firstName: true, lastName: true, email: true } },
-        organization: { select: { id: true, name: true, timezone: true, timesheetPeriod: true } },
+        organization: { select: { id: true, name: true, timezone: true, timesheetPeriod: true, weekStartDay: true } },
       },
     });
     if (!user) throw new AppError('User not found', 404);

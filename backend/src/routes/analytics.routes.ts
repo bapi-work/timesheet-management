@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ANALYTICS_ROLES } from '../middleware/auth.middleware';
+import { displayStatus, DISPLAY_STATUS_SELECT, EMPTY_DRAFT, resolvePeriod, todayFor, weekPeriod } from '../utils/timesheet-rules';
 
 const router = Router();
 router.use(authenticate);
@@ -11,9 +12,10 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
     const canViewAnalytics = ANALYTICS_ROLES.includes(req.user!.role as Parameters<typeof ANALYTICS_ROLES.includes>[0]);
 
     const now = new Date();
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay() + 1);
-    weekStart.setHours(0, 0, 0, 0);
+    const today = await todayFor(orgId, req.get('x-timezone'));
+    const { weekStartDay } = await prisma.organization.findUniqueOrThrow({ where: { id: orgId }, select: { weekStartDay: true } });
+    const weekStart = weekPeriod(today, weekStartDay).periodStart;
+    const thisWeek = { periodStart: { lte: today }, periodEnd: { gte: today } };
 
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -32,7 +34,7 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
         prisma.timesheetApproval.count({ where: { approverId: req.user!.userId, status: 'PENDING' } }),
         (async () => {
           const submitted = await prisma.timesheet.findMany({
-            where: { periodStart: { gte: weekStart }, status: { in: ['SUBMITTED', 'APPROVED'] }, user: { organizationId: orgId, isActive: true, role: { not: 'SYSTEM_ADMIN' } } },
+            where: { ...thisWeek, status: { in: ['SUBMITTED', 'APPROVED'] }, user: { organizationId: orgId, isActive: true, role: { not: 'SYSTEM_ADMIN' } } },
             select: { userId: true },
             distinct: ['userId'],
           });
@@ -51,8 +53,8 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
           where: { isBillable: true, timesheet: { user: { organizationId: orgId } } },
           _sum: { hours: true },
         }),
-        prisma.timesheet.count({ where: { periodStart: { gte: weekStart }, status: 'SUBMITTED', user: { organizationId: orgId } } }),
-        prisma.timesheet.count({ where: { periodStart: { gte: weekStart }, status: 'APPROVED', user: { organizationId: orgId } } }),
+        prisma.timesheet.count({ where: { ...thisWeek, status: 'SUBMITTED', user: { organizationId: orgId } } }),
+        prisma.timesheet.count({ where: { ...thisWeek, status: 'APPROVED', user: { organizationId: orgId } } }),
       ]);
 
       res.json({
@@ -66,10 +68,11 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
         approvedThisWeek,
       });
     } else {
-      const [myTimesheet, pendingLeave, myHoursThisMonth, recentTimesheets, weekDaySubmissions] = await Promise.all([
+      const { timesheetId } = await resolvePeriod(prisma, req.user!.userId, orgId, today);
+      const [myTimesheet, pendingLeave, myHoursThisMonth, recentTimesheets] = await Promise.all([
         prisma.timesheet.findFirst({
-          where: { userId: req.user!.userId, periodStart: { gte: weekStart } },
-          select: { id: true, status: true, totalHours: true, billableHours: true },
+          where: { id: timesheetId ?? '' },
+          select: { totalHours: true, billableHours: true, ...DISPLAY_STATUS_SELECT },
         }),
         prisma.leaveRequest.count({ where: { userId: req.user!.userId, status: 'PENDING' } }),
         prisma.timesheetEntry.aggregate({
@@ -77,33 +80,22 @@ router.get('/dashboard', async (req: AuthRequest, res: Response, next: NextFunct
           _sum: { hours: true },
         }),
         prisma.timesheet.findMany({
-          where: { userId: req.user!.userId },
+          where: { userId: req.user!.userId, NOT: EMPTY_DRAFT },
           orderBy: { periodStart: 'desc' },
           take: 5,
-          select: { id: true, periodStart: true, periodEnd: true, totalHours: true, billableHours: true, status: true, submittedAt: true },
-        }),
-        prisma.daySubmission.findMany({
-          where: { timesheet: { userId: req.user!.userId, periodStart: { gte: weekStart } } },
-          select: { status: true },
+          select: { id: true, periodStart: true, periodEnd: true, totalHours: true, billableHours: true, submittedAt: true, ...DISPLAY_STATUS_SELECT },
         }),
       ]);
 
-      // Derive display status: use timesheet status directly, but upgrade DRAFT if day submissions exist
-      let currentTimesheetStatus = myTimesheet?.status || 'NOT_STARTED';
-      if (currentTimesheetStatus === 'DRAFT' && weekDaySubmissions.length > 0) {
-        const hasApproved = weekDaySubmissions.some(s => s.status === 'APPROVED');
-        const hasSubmitted = weekDaySubmissions.some(s => s.status === 'SUBMITTED');
-        if (hasApproved && !hasSubmitted) currentTimesheetStatus = 'APPROVED';
-        else if (hasSubmitted) currentTimesheetStatus = 'SUBMITTED';
-      }
-
       res.json({
-        currentTimesheetStatus,
+        currentTimesheetStatus: myTimesheet && (myTimesheet.entries.length > 0 || myTimesheet.status !== 'DRAFT') ? displayStatus(myTimesheet) : 'NOT_STARTED',
         hoursThisWeek: myTimesheet?.totalHours || 0,
         billableHoursThisWeek: myTimesheet?.billableHours || 0,
         hoursThisMonth: myHoursThisMonth._sum.hours || 0,
         pendingLeave,
-        recentTimesheets,
+        recentTimesheets: recentTimesheets.map(({ approvals, daySubmissions, entries, ...t }) => ({
+          ...t, displayStatus: displayStatus({ status: t.status, approvals, daySubmissions, entries }),
+        })),
       });
     }
   } catch (err) {

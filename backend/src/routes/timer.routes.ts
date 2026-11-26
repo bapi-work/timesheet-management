@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '../utils/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
-import { assertDatesEditable, assertEntryLinksInOrg, recalcTotals, reopenForEdit, weekPeriod } from '../utils/timesheet-rules';
+import { assertDatesEditable, assertEntryLinksInOrg, getOrCreateTimesheet, recalcTotals, reopenForEdit } from '../utils/timesheet-rules';
 
 const router = Router();
 router.use(authenticate);
@@ -53,30 +53,12 @@ router.post('/start', async (req: AuthRequest, res: Response, next: NextFunction
     if (existing) throw new AppError('A timer is already running. Stop it before starting a new one.', 409);
 
     const now = new Date();
-    const { periodStart: weekStart, periodEnd: weekEnd } = weekPeriod(now);
-
-    let timesheet = await prisma.timesheet.findFirst({
-      where: {
-        userId: req.user!.userId,
-        periodStart: { lte: now },
-        periodEnd: { gte: now },
-      },
-    });
-
-    if (!timesheet) {
-      timesheet = await prisma.timesheet.create({
-        data: {
-          userId: req.user!.userId,
-          periodStart: weekStart,
-          periodEnd: weekEnd,
-          status: 'DRAFT',
-        },
-      });
-    }
+    const timesheet = await getOrCreateTimesheet(prisma, req.user!.userId, req.user!.organizationId, now);
 
     if (!['DRAFT', 'REJECTED'].includes(timesheet.status)) {
       throw new AppError('Cannot start timer on a submitted or approved timesheet.', 400);
     }
+    await assertDatesEditable(prisma, timesheet, [now]);
 
     const entry = await prisma.timesheetEntry.create({
       data: {
@@ -127,7 +109,7 @@ router.post('/stop/:entryId', async (req: AuthRequest, res: Response, next: Next
     const hours = Math.round((netMs / (1000 * 60 * 60)) * 100) / 100;
 
     const updated = await prisma.$transaction(async (tx) => {
-      await reopenForEdit(tx, entry.timesheet, [entry.date]);
+      await reopenForEdit(tx, entry.timesheet);
       const stopped = await tx.timesheetEntry.update({
         where: { id: entryId },
         data: { endTime: now, hours },

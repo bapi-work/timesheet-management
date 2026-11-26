@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import api from '../lib/api';
+import { formatPeriod } from '../lib/timesheet';
 import toast from 'react-hot-toast';
 import { CheckIcon, XMarkIcon, CheckCircleIcon, MagnifyingGlassIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 
@@ -319,7 +320,7 @@ export default function ApprovalsPage() {
                           {isDue && <span className="badge-red">Overdue</span>}
                         </div>
                         <p className="text-sm text-gray-600">
-                          {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
+                          {formatPeriod(ts.periodStart as string, ts.periodEnd as string)}
                           <span className="ml-2 font-medium">{(ts.totalHours as number)?.toFixed(2)}h total</span>
                           {(ts.overtimeHours as number) > 0 && <span className="ml-1 text-orange-600">({(ts.overtimeHours as number)?.toFixed(2)}h OT)</span>}
                         </p>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { formatPeriod, timesheetStatus } from '../lib/timesheet';
 import { ArrowLeftIcon, PencilIcon, TrashIcon, KeyIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import { useAuthStore } from '../store/auth.store';
@@ -193,11 +194,11 @@ export default function EmployeeDetailPage() {
             <tbody className="divide-y divide-gray-100">
               {(timesheets as Record<string, unknown>[]).slice(0, 10).map(ts => (
                 <tr key={ts.id as string} className="tr-hover">
-                  <td className="td">{format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}</td>
-                  <td className="td">{(ts.totalHours as number).toFixed(1)}h</td>
-                  <td className="td">{(ts.billableHours as number).toFixed(1)}h</td>
-                  <td className="td">{(ts.overtimeHours as number).toFixed(1)}h</td>
-                  <td className="td"><span className={ts.status === 'APPROVED' ? 'badge-green' : ts.status === 'REJECTED' ? 'badge-red' : ts.status === 'SUBMITTED' ? 'badge-blue' : 'badge-gray'}>{ts.status as string}</span></td>
+                  <td className="td">{formatPeriod(ts.periodStart as string, ts.periodEnd as string)}</td>
+                  <td className="td">{(ts.totalHours as number).toFixed(2)}h</td>
+                  <td className="td">{(ts.billableHours as number).toFixed(2)}h</td>
+                  <td className="td">{(ts.overtimeHours as number).toFixed(2)}h</td>
+                  <td className="td"><span className={timesheetStatus(ts.displayStatus as string).cls}>{timesheetStatus(ts.displayStatus as string).label}</span></td>
                 </tr>
               ))}
               {!timesheets.length && (

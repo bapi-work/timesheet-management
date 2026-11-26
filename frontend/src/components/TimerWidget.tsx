@@ -5,6 +5,7 @@ import { PlayIcon, StopIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon } from '@
 import toast from 'react-hot-toast';
 import clsx from 'clsx';
 import api from '../lib/api';
+import { refreshTimesheets } from '../lib/timesheet';
 
 interface TimerEntry {
   id: string;
@@ -75,10 +76,10 @@ export default function TimerWidget() {
     mutationFn: (entryId: string) => api.post(`/timer/stop/${entryId}`).then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['timer-active'] });
-      qc.invalidateQueries({ queryKey: ['timesheets'] });
+      refreshTimesheets(qc);
       toast.success(t('timer.timerStopped'));
     },
-    onError: () => toast.error('Failed to stop timer'),
+    onError: (e: unknown) => toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to stop timer'),
   });
 
   const discardMutation = useMutation({

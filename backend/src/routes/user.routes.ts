@@ -7,6 +7,7 @@ import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES, SYSTE
 import { AppError } from '../middleware/error.middleware';
 import { generateTempPassword, revokeSessions, stripSecrets } from '../utils/sessions';
 import { canReviewUser } from '../utils/access';
+import { displayStatus, EMPTY_DRAFT } from '../utils/timesheet-rules';
 import { UserRole } from '@prisma/client';
 
 const router = Router();
@@ -42,6 +43,12 @@ const upload = multer({
   },
 });
 
+// Digits with the usual separators; 7 to 15 digits is the international range
+const phoneSchema = z.string().trim().refine(
+  v => v === '' || (/^\+?[\d\s().-]+$/.test(v) && /^\d{7,15}$/.test(v.replace(/\D/g, ''))),
+  'Enter a valid phone number (7 to 15 digits)'
+);
+
 const createUserSchema = z.object({
   employeeId: z.string(),
   email: z.string().email(),
@@ -52,7 +59,7 @@ const createUserSchema = z.object({
   managerId: z.string().optional(),
   designation: z.string().optional(),
   joinDate: z.string().optional(),
-  phone: z.string().optional(),
+  phone: phoneSchema.optional(),
   timezone: z.string().optional(),
 });
 
@@ -187,6 +194,8 @@ router.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) =
         updates[field] = req.body[field] === true || req.body[field] === 'true';
       } else if ((field === 'departmentId' || field === 'managerId') && req.body[field] === '') {
         updates[field] = null;
+      } else if (field === 'phone') {
+        updates[field] = phoneSchema.nullable().parse(req.body[field]);
       } else {
         updates[field] = req.body[field];
       }
@@ -265,7 +274,7 @@ router.get('/:id/timesheets', async (req: AuthRequest, res: Response, next: Next
     if (!targetUser) throw new AppError('User not found', 404);
 
     const { from, to, status } = req.query;
-    const where: Record<string, unknown> = { userId: req.params.id };
+    const where: Record<string, unknown> = { userId: req.params.id, NOT: EMPTY_DRAFT };
     if (from || to) {
       where.periodStart = {};
       if (from) (where.periodStart as Record<string, unknown>).gte = new Date(from as string);
@@ -276,9 +285,13 @@ router.get('/:id/timesheets', async (req: AuthRequest, res: Response, next: Next
     const timesheets = await prisma.timesheet.findMany({
       where,
       orderBy: { periodStart: 'desc' },
-      include: { approvals: { include: { approver: { select: { firstName: true, lastName: true } } } } },
+      include: {
+        approvals: { include: { approver: { select: { firstName: true, lastName: true } } } },
+        daySubmissions: { select: { date: true, status: true } },
+        entries: { select: { date: true } },
+      },
     });
-    res.json(timesheets);
+    res.json(timesheets.map(({ daySubmissions, entries, ...t }) => ({ ...t, displayStatus: displayStatus({ ...t, daySubmissions, entries }) })));
   } catch (err) {
     next(err);
   }

@@ -109,7 +109,7 @@ docker compose exec backend node dist/scripts/reset-password.js --email admin@ex
 
 ### Leave
 - ✅ Leave requests (Annual, Sick, Maternity, etc.)
-- ✅ Leave balance tracking
+- ✅ Leave balance tracking, with HR and Admin setting every employee's balances from one Excel upload (Leave → Upload Balances)
 - ✅ Holiday calendar
 
 ### Management

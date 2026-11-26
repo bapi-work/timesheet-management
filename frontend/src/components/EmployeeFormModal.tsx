@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
+import { validatePhone } from '../lib/timesheet';
 import toast from 'react-hot-toast';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import api from '../lib/api';
@@ -198,7 +199,8 @@ export default function EmployeeFormModal({ onClose, employee }: EmployeeFormMod
             </div>
             <div>
               <label className="label">Phone</label>
-              <input {...register('phone')} type="tel" className="input" />
+              <input {...register('phone', { validate: validatePhone })} type="tel" className={`input ${errors.phone ? 'input-error' : ''}`} />
+              {errors.phone && <p className="error-msg">{errors.phone.message}</p>}
             </div>
           </div>
 

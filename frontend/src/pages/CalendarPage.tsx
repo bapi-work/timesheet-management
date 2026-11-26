@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, startOfWeek, endOfWeek } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, startOfWeek, endOfWeek, subDays } from 'date-fns';
 import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
 import api from '../lib/api';
 import { useAuthStore } from '../store/auth.store';
 import { hasRole, MANAGEMENT_ROLES } from '../lib/roles';
+import { useWeekStart } from '../lib/timesheet';
 import clsx from 'clsx';
 
 interface CalendarEntry {
@@ -38,6 +39,8 @@ export default function CalendarPage() {
   const [view, setView] = useState<'month' | 'week'>('month');
   const [selectedDayPopup, setSelectedDayPopup] = useState<{ date: string; users: { name: string; hours: number }[] } | null>(null);
 
+  const weekStartsOn = useWeekStart();
+
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
 
@@ -46,8 +49,9 @@ export default function CalendarPage() {
     queryFn: () =>
       api.get('/timesheets', {
         params: {
-          from: format(startOfWeek(monthStart, { weekStartsOn: 0 }), 'yyyy-MM-dd'),
-          to: format(endOfWeek(monthEnd, { weekStartsOn: 0 }), 'yyyy-MM-dd'),
+          // Matched on the first day of each timesheet, which can be up to six days before the month
+          from: format(subDays(monthStart, 6), 'yyyy-MM-dd'),
+          to: format(monthEnd, 'yyyy-MM-dd'),
           limit: 200,
         },
       }).then(r => r.data),
@@ -128,11 +132,11 @@ export default function CalendarPage() {
   holidays.forEach(h => holidayMap.set(h.date.slice(0, 10), h));
 
   // For week view, show only the 7 days of the week containing currentDate
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
-  const weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 });
+  const weekStart = startOfWeek(currentDate, { weekStartsOn });
+  const weekEnd = endOfWeek(currentDate, { weekStartsOn });
 
-  const calStart = view === 'week' ? weekStart : startOfWeek(monthStart, { weekStartsOn: 0 });
-  const calEnd   = view === 'week' ? weekEnd   : endOfWeek(monthEnd, { weekStartsOn: 0 });
+  const calStart = view === 'week' ? weekStart : startOfWeek(monthStart, { weekStartsOn });
+  const calEnd   = view === 'week' ? weekEnd   : endOfWeek(monthEnd, { weekStartsOn });
   const days = eachDayOfInterval({ start: calStart, end: calEnd });
 
   const prevMonth = () => setCurrentDate(d =>
@@ -198,9 +202,9 @@ export default function CalendarPage() {
 
         {/* Day header */}
         <div className="grid grid-cols-7 border-b border-gray-100">
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-            <div key={d} className="py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              {d}
+          {days.slice(0, 7).map(d => (
+            <div key={d.toISOString()} className="py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              {format(d, 'EEE')}
             </div>
           ))}
         </div>
@@ -254,9 +258,9 @@ export default function CalendarPage() {
                       }
                     }}
                   >
-                    {entry.totalHours.toFixed(1)} {t('calendar.hoursWorked')}
+                    {entry.totalHours.toFixed(2)} {t('calendar.hoursWorked')}
                     {entry.billableHours > 0 && entry.billableHours < entry.totalHours && (
-                      <span className="text-gray-500 ml-1">({entry.billableHours.toFixed(1)}b)</span>
+                      <span className="text-gray-500 ml-1">({entry.billableHours.toFixed(2)}b)</span>
                     )}
                   </div>
                 )}
@@ -317,12 +321,12 @@ export default function CalendarPage() {
             <>
               <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <p className="text-sm text-gray-500">Total Hours</p>
-                <p className="text-2xl font-bold text-gray-900">{totalHours.toFixed(1)}</p>
+                <p className="text-2xl font-bold text-gray-900">{totalHours.toFixed(2)}</p>
                 <p className="text-xs text-gray-400">{daysLogged} of {workdays} working days logged</p>
               </div>
               <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <p className="text-sm text-gray-500">Billable Hours</p>
-                <p className="text-2xl font-bold text-blue-600">{billableHours.toFixed(1)}</p>
+                <p className="text-2xl font-bold text-blue-600">{billableHours.toFixed(2)}</p>
                 <p className="text-xs text-gray-400">{totalHours > 0 ? ((billableHours / totalHours) * 100).toFixed(0) : 0}% billable</p>
               </div>
               <div className="bg-white rounded-xl border border-gray-200 p-4">

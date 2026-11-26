@@ -1,13 +1,14 @@
 import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  format, eachDayOfInterval, startOfWeek, endOfWeek,
+  format, eachDayOfInterval, subDays,
   startOfMonth, endOfMonth, addMonths, parseISO, isWeekend,
 } from 'date-fns';
 import { PlusIcon, TrashIcon, ChevronLeftIcon, ChevronRightIcon, PaperAirplaneIcon } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
+import { dayOf, isDayFrozen, isWeekPending, refreshTimesheets, timesheetStatus, todayKey } from '../lib/timesheet';
 
 interface Project {
   id: string;
@@ -48,7 +49,10 @@ interface Timesheet {
   periodStart: string;
   periodEnd: string;
   status: string;
+  displayStatus?: string;
   entries: TimesheetEntry[];
+  approvals?: { status: string }[];
+  daySubmissions?: { date: string; status: string }[];
 }
 
 const DEFAULT_CATEGORIES = [
@@ -73,15 +77,16 @@ function HHMMToHours(val: string): number {
 }
 
 function rowKey(e: TimesheetEntry): string {
-  return [e.projectId || '', e.taskId || '', e.category || '', e.isBillable ? '1' : '0', e.entryType || 'REGULAR'].join('|');
+  return [e.projectId || '', e.taskId || '', e.category || '', e.isBillable ? '1' : '0', e.entryType || 'REGULAR', e.description || ''].join('|');
 }
 
-function buildRows(timesheets: Timesheet[]): GridRow[] {
+function buildRows(timesheets: Timesheet[], first: string, last: string): GridRow[] {
   const map = new Map<string, GridRow>();
   for (const ts of timesheets) {
     for (const e of ts.entries) {
       const key = rowKey(e);
       const dateKey = e.date.slice(0, 10);
+      if (dateKey < first || dateKey > last) continue;
       if (!map.has(key)) {
         map.set(key, {
           key,
@@ -117,28 +122,28 @@ function emptyRow(): GridRow {
 interface Props {
   mode: 'weekly' | 'monthly';
   projects: Project[];
-  weekBase: Date; // used for weekly mode (current week from parent)
+  periodStart: string; // the week shown by the parent, used for weekly mode
+  periodEnd: string;
 }
 
-export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
+export default function GridTimesheetView({ mode, projects, periodStart, periodEnd }: Props) {
   const qc = useQueryClient();
   const { data: workCategories } = useQuery({
     queryKey: ['work-categories'],
     queryFn: () => api.get('/timesheets/work-categories').then(r => r.data as { id: string; name: string }[]),
     staleTime: 5 * 60 * 1000,
   });
-  const entryCategories = workCategories?.map(c => c.name) ?? DEFAULT_CATEGORIES;
+  const entryCategories = workCategories?.length ? workCategories.map(c => c.name) : DEFAULT_CATEGORIES;
   const [monthDate, setMonthDate] = useState(() => startOfMonth(new Date()));
   const [rows, setRows] = useState<GridRow[]>([emptyRow()]);
   const [saving, setSaving] = useState<Set<string>>(new Set());
-  const timesheetMapRef = useRef<Map<string, Timesheet>>(new Map()); // periodStart → timesheet
+  const sheetsRef = useRef<Timesheet[]>([]);
 
-  const rangeStart = mode === 'weekly'
-    ? startOfWeek(weekBase, { weekStartsOn: 0 })
-    : startOfMonth(monthDate);
-  const rangeEnd = mode === 'weekly'
-    ? endOfWeek(weekBase, { weekStartsOn: 0 })
-    : endOfMonth(monthDate);
+  const rangeStart = mode === 'weekly' ? parseISO(dayOf(periodStart)) : startOfMonth(monthDate);
+  const rangeEnd = mode === 'weekly' ? parseISO(dayOf(periodEnd)) : endOfMonth(monthDate);
+
+  const sheetFor = (dateKey: string) =>
+    sheetsRef.current.find(ts => dayOf(ts.periodStart) <= dateKey && dayOf(ts.periodEnd) >= dateKey);
 
   const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
 
@@ -149,39 +154,37 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
     queryFn: async () => {
       const { data } = await api.get('/timesheets', {
         params: {
-          from: format(rangeStart, 'yyyy-MM-dd'),
+          mine: true,
+          // Matched on the first day of each timesheet, which can be up to six days before the range
+          from: format(subDays(rangeStart, 6), 'yyyy-MM-dd'),
           to: format(rangeEnd, 'yyyy-MM-dd'),
-          limit: 10,
+          limit: 20,
         },
       });
       const sheets: Timesheet[] = data.timesheets || [];
-      timesheetMapRef.current = new Map(
-        sheets.map(ts => [ts.periodStart.slice(0, 10), ts])
-      );
-      const built = buildRows(sheets);
+      sheetsRef.current = sheets;
+      const built = buildRows(sheets, format(rangeStart, 'yyyy-MM-dd'), format(rangeEnd, 'yyyy-MM-dd'));
       setRows(built.length ? [...built, emptyRow()] : [emptyRow()]);
       return sheets;
     },
   });
 
-  const getOrCreateTimesheet = useCallback(async (date: Date): Promise<Timesheet> => {
-    const weekStart = startOfWeek(date, { weekStartsOn: 0 });
-    const weekKey = format(weekStart, 'yyyy-MM-dd');
-    if (timesheetMapRef.current.has(weekKey)) {
-      return timesheetMapRef.current.get(weekKey)!;
-    }
-    const { data } = await api.get(`/timesheets/current?week=${weekKey}`);
-    timesheetMapRef.current.set(weekKey, data);
+  const getOrCreateTimesheet = useCallback(async (dateKey: string): Promise<Timesheet> => {
+    const existing = sheetFor(dateKey);
+    if (existing) return existing;
+    const { data } = await api.post('/timesheets', { date: dateKey });
+    if (!sheetsRef.current.some(ts => ts.id === data.id)) sheetsRef.current.push({ ...data, entries: [] });
     return data;
   }, []);
 
   const saveCell = useCallback(async (row: GridRow, dateKey: string, hours: number) => {
     if (!row.projectId) { toast.error('Select a project first'); return; }
+    if (hours > 24) { toast.error('Maximum 24 hours per day'); return; }
+    if (hours > 0 && !row.description.trim()) { toast.error('Enter a description first'); return; }
     const cellKey = `${row.key}|${dateKey}`;
     setSaving(s => new Set(s).add(cellKey));
     try {
-      const date = parseISO(dateKey);
-      const ts = await getOrCreateTimesheet(date);
+      const ts = await getOrCreateTimesheet(dateKey);
       const existingEntryId = row.entryIds[dateKey];
 
       if (hours <= 0) {
@@ -213,7 +216,7 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
           ? { ...r, hours: { ...r.hours, [dateKey]: hours }, entryIds: { ...r.entryIds, [dateKey]: newId }, tsIds: { ...r.tsIds, [dateKey]: ts.id } }
           : r));
       }
-      qc.invalidateQueries({ queryKey: ['timesheet'] });
+      ['timesheet', 'timesheets', 'analytics', 'report', 'calendar-timesheets'].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
     } catch (e: unknown) {
       toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to save');
     } finally {
@@ -225,36 +228,27 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
     const entryDates = Object.keys(row.entryIds);
     for (const dateKey of entryDates) {
       try {
-        const ts = timesheetMapRef.current.get(
-          format(startOfWeek(parseISO(dateKey), { weekStartsOn: 0 }), 'yyyy-MM-dd')
-        );
-        if (ts) await api.delete(`/timesheets/${ts.id}/entries/${row.entryIds[dateKey]}`);
-      } catch {}
+        await api.delete(`/timesheets/${row.tsIds[dateKey]}/entries/${row.entryIds[dateKey]}`);
+      } catch (e: unknown) {
+        toast.error((e as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to delete');
+      }
     }
     setRows(prev => prev.filter(r => r.key !== row.key));
-    qc.invalidateQueries({ queryKey: ['timesheet'] });
+    refreshTimesheets(qc);
   }, [qc]);
 
   const addRow = () => setRows(prev => [...prev, emptyRow()]);
 
   // Derive the single weekly timesheet (only used in weekly mode)
-  const weeklyTimesheetId = mode === 'weekly'
-    ? timesheetMapRef.current.get(format(rangeStart, 'yyyy-MM-dd'))?.id
-    : undefined;
-  const weeklyStatus = mode === 'weekly'
-    ? timesheetMapRef.current.get(format(rangeStart, 'yyyy-MM-dd'))?.status
-    : undefined;
+  const weekly = mode === 'weekly' ? sheetFor(format(rangeStart, 'yyyy-MM-dd')) : undefined;
+  const weeklyStatus = weekly?.displayStatus;
+  const weekClosed = !!weekly && (['APPROVED', 'LOCKED'].includes(weekly.status) || isWeekPending(weekly));
 
   const submitWeekMutation = useMutation({
     mutationFn: (id: string) => api.post(`/timesheets/${id}/submit`),
     onSuccess: () => {
       toast.success('Week submitted for approval');
-      qc.invalidateQueries({ queryKey: ['grid-timesheets'] });
-      qc.invalidateQueries({ queryKey: ['timesheet'] });
-      qc.invalidateQueries({ queryKey: ['timesheets'] });
-      // update local ref status
-      const ts = timesheetMapRef.current.get(format(rangeStart, 'yyyy-MM-dd'));
-      if (ts) timesheetMapRef.current.set(format(rangeStart, 'yyyy-MM-dd'), { ...ts, status: 'SUBMITTED' });
+      refreshTimesheets(qc);
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
       toast.error(e.response?.data?.message || 'Failed to submit'),
@@ -301,6 +295,7 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
               <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-r border-gray-200 min-w-[160px]">Project</th>
               <th className="text-left px-3 py-2 font-semibold text-gray-600 border-r border-gray-200 min-w-[140px]">Task</th>
               <th className="text-left px-3 py-2 font-semibold text-gray-600 border-r border-gray-200 min-w-[120px]">Category</th>
+              <th className="text-left px-3 py-2 font-semibold text-gray-600 border-r border-gray-200 min-w-[160px]">Description *</th>
               <th className="text-center px-2 py-2 font-semibold text-gray-600 border-r border-gray-200 w-20">Billable</th>
               {days.map(day => {
                 const wknd = isWeekend(day);
@@ -369,6 +364,17 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
                     </select>
                   </td>
 
+                  {/* Description */}
+                  <td className="px-2 py-1.5 border-r border-gray-200">
+                    <input
+                      type="text"
+                      value={row.description}
+                      onChange={e => updateRowMeta(row.key, 'description', e.target.value)}
+                      placeholder="What did you work on?"
+                      className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                    />
+                  </td>
+
                   {/* Billable */}
                   <td className="px-2 py-1.5 border-r border-gray-200 text-center">
                     <input
@@ -385,6 +391,8 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
                     const wknd = isWeekend(day);
                     const cellKey = `${row.key}|${dk}`;
                     const isSavingCell = saving.has(cellKey);
+                    const sheet = sheetFor(dk);
+                    const blocked = wknd || dk > todayKey() || (!!sheet && isDayFrozen(sheet, dk));
 
                     return (
                       <td key={dk} className={clsx('px-1 py-1.5 border-r border-gray-200 text-center', wknd && 'bg-gray-50')}>
@@ -393,10 +401,10 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
                           placeholder="00:00"
                           defaultValue={row.hours[dk] ? hoursToHHMM(row.hours[dk]) : ''}
                           key={`${row.key}-${dk}-${row.hours[dk]}`}
-                          disabled={wknd || isSavingCell}
+                          disabled={blocked || isSavingCell}
                           className={clsx(
                             'w-14 text-center text-xs border rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400',
-                            wknd ? 'bg-gray-50 border-transparent text-gray-300 cursor-not-allowed' : 'border-gray-200 bg-white',
+                            blocked ? 'bg-gray-50 border-transparent text-gray-300 cursor-not-allowed' : 'border-gray-200 bg-white',
                             isSavingCell && 'opacity-50',
                             row.hours[dk] && 'font-medium text-blue-700 border-blue-200',
                           )}
@@ -412,14 +420,15 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
 
                   {/* Row total */}
                   <td className="px-2 py-1.5 border-r border-gray-200 text-center font-semibold text-gray-700 text-xs">
-                    {rowTotal > 0 ? `${rowTotal.toFixed(1)}h` : '—'}
+                    {rowTotal > 0 ? `${rowTotal.toFixed(2)}h` : '—'}
                   </td>
 
                   {/* Delete */}
                   <td className="px-1 py-1.5 text-center">
                     <button
                       onClick={() => deleteRow(row)}
-                      className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                      disabled={Object.keys(row.entryIds).some(dk => { const sheet = sheetFor(dk); return !!sheet && isDayFrozen(sheet, dk); })}
+                      className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                       title="Remove row"
                     >
                       <TrashIcon className="h-3.5 w-3.5" />
@@ -433,7 +442,7 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
           {/* Footer totals */}
           <tfoot>
             <tr className="bg-gray-50 border-t-2 border-gray-300 font-semibold">
-              <td colSpan={4} className="sticky left-0 bg-gray-50 px-3 py-2 text-xs text-gray-600 border-r border-gray-200">
+              <td colSpan={5} className="sticky left-0 bg-gray-50 px-3 py-2 text-xs text-gray-600 border-r border-gray-200">
                 Total
               </td>
               {days.map(day => {
@@ -441,12 +450,12 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
                 const total = dayTotals[dk] || 0;
                 return (
                   <td key={dk} className={clsx('text-center px-1 py-2 text-xs border-r border-gray-200', isWeekend(day) && 'bg-gray-100', total > 0 && (total >= 8 ? 'text-green-700' : 'text-orange-600'))}>
-                    {total > 0 ? `${total.toFixed(1)}h` : '—'}
+                    {total > 0 ? `${total.toFixed(2)}h` : '—'}
                   </td>
                 );
               })}
               <td className="text-center px-2 py-2 text-xs text-blue-700 border-r border-gray-200">
-                {totalHours.toFixed(1)}h
+                {totalHours.toFixed(2)}h
               </td>
               <td />
             </tr>
@@ -463,19 +472,11 @@ export default function GridTimesheetView({ mode, projects, weekBase }: Props) {
         {mode === 'weekly' && (
           <div className="flex items-center gap-3">
             {weeklyStatus && weeklyStatus !== 'DRAFT' && (
-              <span className={clsx(
-                'text-xs font-medium px-2.5 py-1 rounded-full',
-                weeklyStatus === 'SUBMITTED' && 'bg-blue-100 text-blue-700',
-                weeklyStatus === 'APPROVED' && 'bg-green-100 text-green-700',
-                weeklyStatus === 'REJECTED' && 'bg-red-100 text-red-700',
-                weeklyStatus === 'IN_REVIEW' && 'bg-blue-100 text-blue-700',
-              )}>
-                {weeklyStatus === 'IN_REVIEW' ? 'In Review' : weeklyStatus}
-              </span>
+              <span className={timesheetStatus(weeklyStatus).cls}>{timesheetStatus(weeklyStatus).label}</span>
             )}
             <button
-              onClick={() => { if (weeklyTimesheetId) submitWeekMutation.mutate(weeklyTimesheetId); else toast.error('No entries to submit — add time first'); }}
-              disabled={submitWeekMutation.isPending || totalHours === 0 || (!!weeklyStatus && weeklyStatus !== 'DRAFT' && weeklyStatus !== 'REJECTED')}
+              onClick={() => { if (weekly) submitWeekMutation.mutate(weekly.id); else toast.error('No entries to submit — add time first'); }}
+              disabled={submitWeekMutation.isPending || totalHours === 0 || weekClosed}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <PaperAirplaneIcon className="h-4 w-4" />

@@ -18,6 +18,8 @@ export function setAccessToken(token: string | null): void {
 
 api.interceptors.request.use((config) => {
   if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
+  // Lets the server agree with this screen about which day is today
+  config.headers['X-Timezone'] = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return config;
 });
 

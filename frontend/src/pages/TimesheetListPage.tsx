@@ -1,36 +1,12 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { ClockIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, XMarkIcon, CheckCircleIcon, ExclamationTriangleIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { hasRole, ADMIN_ROLES } from '../lib/roles';
+import { formatDay, formatPeriod, refreshTimesheets, timesheetStatus } from '../lib/timesheet';
 import toast from 'react-hot-toast';
-
-const STATUS_BADGE: Record<string, string> = {
-  DRAFT: 'badge-gray', SUBMITTED: 'badge-blue', APPROVED: 'badge-green',
-  REJECTED: 'badge-red', LOCKED: 'badge-purple', IN_REVIEW: 'badge-blue',
-  NEEDS_SUBMISSION: 'badge-yellow',
-};
-
-function deriveDisplayStatus(timesheetStatus: string, daySubmissions: { status: string }[], totalHours: number): string {
-  if (['LOCKED', 'APPROVED', 'SUBMITTED', 'REJECTED'].includes(timesheetStatus)) return timesheetStatus;
-  const hasSubmitted = daySubmissions.some(d => d.status === 'SUBMITTED');
-  const hasRejected  = daySubmissions.some(d => d.status === 'REJECTED');
-  const allApproved  = daySubmissions.length > 0 && daySubmissions.every(d => d.status === 'APPROVED');
-  if (allApproved)  return 'APPROVED';
-  if (hasRejected)  return 'REJECTED';
-  if (hasSubmitted) return 'IN_REVIEW';
-  // DRAFT with logged hours but no submission — needs action
-  if (timesheetStatus === 'DRAFT' && totalHours > 0) return 'NEEDS_SUBMISSION';
-  return timesheetStatus;
-}
-
-// Parse server ISO date strings safely without timezone offset shifting
-function formatDateStr(iso: string, fmt: string) {
-  return format(parseISO(iso.slice(0, 10)), fmt);
-}
 
 const VALID_STATUSES = ['', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
 const MANAGER_STATUSES = ['', 'SUBMITTED', 'APPROVED', 'REJECTED', 'LOCKED'];
@@ -89,7 +65,7 @@ export default function TimesheetListPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/timesheets/${id}`),
-    onSuccess: () => { toast.success('Timesheet deleted'); queryClient.invalidateQueries({ queryKey: ['timesheets'] }); },
+    onSuccess: () => { toast.success('Timesheet deleted'); refreshTimesheets(queryClient); },
     onError: (e: { response?: { data?: { message?: string } } }) => toast.error(e.response?.data?.message || 'Cannot delete timesheet'),
   });
 
@@ -101,7 +77,7 @@ export default function TimesheetListPage() {
     },
     onSuccess: (result: UploadResult) => {
       setUploadResult(result);
-      queryClient.invalidateQueries({ queryKey: ['timesheets'] });
+      refreshTimesheets(queryClient);
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Upload failed';
@@ -236,7 +212,7 @@ export default function TimesheetListPage() {
               status === s ? 'bg-primary-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            {s ? s : isManager ? 'All (excl. Drafts)' : 'All'}
+            {s ? timesheetStatus(s).label : isManager ? 'All (excl. Drafts)' : 'All'}
           </button>
         ))}
 
@@ -306,8 +282,7 @@ export default function TimesheetListPage() {
               </tr>
             ) : (data?.timesheets || []).map((ts: Record<string, unknown>) => {
               const u = ts.user as Record<string, unknown> | undefined;
-              const daySubs = (ts.daySubmissions as { status: string }[]) || [];
-              const displayStatus = deriveDisplayStatus(ts.status as string, daySubs, (ts.totalHours as number) || 0);
+              const shown = timesheetStatus(ts.displayStatus as string);
               return (
                 <tr key={ts.id as string} className="tr-hover">
                   {isManager && (
@@ -317,22 +292,20 @@ export default function TimesheetListPage() {
                     </td>
                   )}
                   <td className="td font-medium">
-                    {formatDateStr(ts.periodStart as string, 'MMM d')} – {formatDateStr(ts.periodEnd as string, 'MMM d, yyyy')}
+                    {formatPeriod(ts.periodStart as string, ts.periodEnd as string)}
                   </td>
                   <td className="td">{((ts.totalHours as number) || 0).toFixed(2)}h</td>
                   <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(2)}h</td>
                   <td className="td">
-                    <span className={STATUS_BADGE[displayStatus] || 'badge-gray'}>
-                      {displayStatus === 'IN_REVIEW' ? 'In Review' : displayStatus === 'NEEDS_SUBMISSION' ? 'Needs Submission' : displayStatus}
-                    </span>
+                    <span className={shown.cls}>{shown.label}</span>
                   </td>
                   <td className="td text-gray-400 text-xs">
-                    {ts.submittedAt ? formatDateStr(ts.submittedAt as string, 'MMM d, yyyy') : '—'}
+                    {ts.submittedAt ? formatDay(ts.submittedAt as string) : '—'}
                   </td>
                   <td className="td">
                     <div className="flex items-center gap-2">
                       <Link to={`/timesheets/${ts.id}`} className="text-primary-600 hover:underline text-sm">View</Link>
-                      {ts.status === 'DRAFT' && !isAdmin && (
+                      {ts.displayStatus === 'DRAFT' && ts.status === 'DRAFT' && !isAdmin && (
                         <button
                           onClick={() => { if (window.confirm('Delete this draft timesheet? This cannot be undone.')) deleteMutation.mutate(ts.id as string); }}
                           className="text-red-400 hover:text-red-600"

@@ -237,7 +237,7 @@ describe('timesheet approvals', () => {
 });
 
 describe('timesheet locking', () => {
-  const entry = { date: WEEK.entryDate, hours: 2 };
+  const entry = { date: WEEK.entryDate, hours: 2, description: 'Work' };
 
   async function approvedWeek() {
     const org = await createOrg();
@@ -275,13 +275,19 @@ describe('timesheet locking', () => {
     expect(await prisma.timesheetEntry.count({ where: { timesheetId: timesheet.id } })).toBe(1);
   });
 
-  it('sends a submitted timesheet back for review when hours change', async () => {
+  it('keeps a submitted timesheet unchanged until it is withdrawn', async () => {
     const org = await createOrg();
     const hr = await createUser(org.id, 'HR_ADMIN');
     const emp = await createUser(org.id);
     const { timesheet } = await createTimesheet(emp.id, 'SUBMITTED', [hr.id]);
-    const res = await as(emp).put(`/api/timesheets/${timesheet.id}/entries/${timesheet.entries[0].id}`).send({ hours: 4 });
-    expect(res.status).toBe(200);
+    const edit = () => as(emp).put(`/api/timesheets/${timesheet.id}/entries/${timesheet.entries[0].id}`).send({ hours: 4 });
+    expect((await edit()).status).toBe(409);
+    expect((await prisma.timesheet.findUniqueOrThrow({ where: { id: timesheet.id } })).status).toBe('SUBMITTED');
+
+    expect((await as(hr).post(`/api/timesheets/${timesheet.id}/withdraw`)).status).toBe(403);
+    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/withdraw`)).status).toBe(200);
+    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/withdraw`)).status).toBe(409);
+    expect((await edit()).status).toBe(200);
     expect((await prisma.timesheet.findUniqueOrThrow({ where: { id: timesheet.id } })).status).toBe('DRAFT');
     expect(await prisma.timesheetApproval.count({ where: { timesheetId: timesheet.id, status: 'PENDING' } })).toBe(0);
   });
@@ -293,7 +299,7 @@ describe('timesheet locking', () => {
     await prisma.daySubmission.create({ data: { timesheetId: timesheet.id, date: new Date(WEEK.entryDate), status: 'APPROVED' } });
 
     expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send(entry)).status).toBe(409);
-    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ date: '2026-03-05', hours: 2 })).status).toBe(201);
+    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ ...entry, date: '2026-03-05' })).status).toBe(201);
 
     // New unapproved hours mean the week as a whole isn't approved any more, so payroll won't pick it up
     expect((await prisma.timesheet.findUniqueOrThrow({ where: { id: timesheet.id } })).status).toBe('DRAFT');
@@ -303,7 +309,7 @@ describe('timesheet locking', () => {
     const org = await createOrg();
     const emp = await createUser(org.id);
     const { timesheet } = await createTimesheet(emp.id);
-    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ date: '2026-05-01', hours: 2 })).status).toBe(400);
+    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ ...entry, date: '2026-05-01' })).status).toBe(400);
   });
 
   it('copy-previous lands on the right dates across a month boundary', async () => {
@@ -317,9 +323,9 @@ describe('timesheet locking', () => {
         entries: { create: { date: new Date('2026-02-25T00:00:00.000Z'), hours: 8, category: 'Dev' } },
       },
     });
-    const current = await prisma.timesheet.create({ data: { userId: emp.id, periodStart: WEEK.start, periodEnd: WEEK.end } });
+    const current = await as(emp).post('/api/timesheets').send({ date: WEEK.entryDate });
 
-    const res = await as(emp).post(`/api/timesheets/${current.id}/copy-previous`);
+    const res = await as(emp).post(`/api/timesheets/${current.body.id}/copy-previous`);
     expect(res.status).toBe(200);
     expect(new Date(res.body[0].date).toISOString().slice(0, 10)).toBe('2026-03-04');
     expect(res.body[0].category).toBe('Dev');
@@ -328,9 +334,10 @@ describe('timesheet locking', () => {
   it('uses the same weeks for the timesheet screen, upload and timer', async () => {
     const org = await createOrg();
     const emp = await createUser(org.id);
-    const first = await as(emp).get('/api/timesheets/current');
+    const shown = await as(emp).get('/api/timesheets/current');
     const started = await as(emp).post('/api/timer/start').send({});
-    expect(started.body.timesheetId).toBe(first.body.id);
+    const sheet = await prisma.timesheet.findUniqueOrThrow({ where: { id: started.body.timesheetId } });
+    expect(sheet.periodStart.toISOString()).toBe(shown.body.periodStart);
     expect(await prisma.timesheet.count({ where: { userId: emp.id } })).toBe(1);
   });
 });

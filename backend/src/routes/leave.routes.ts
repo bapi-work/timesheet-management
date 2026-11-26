@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
+import * as XLSX from 'xlsx';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ADMIN_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
 import { AppError } from '../middleware/error.middleware';
@@ -177,39 +178,53 @@ router.post('/requests', async (req: AuthRequest, res: Response, next: NextFunct
     const days = dayType === 'HALF_DAY' ? 0.5 : rawDays;
     const year = start.getFullYear();
 
-    // Check leave balance if entitlement is configured
-    const balance = await prisma.leaveBalance.findUnique({
-      where: { userId_leaveType_year: { userId: req.user!.userId, leaveType, year } },
-    });
-    if (balance && balance.entitled > 0) {
-      const remaining = balance.entitled - balance.used - balance.pending;
-      if (days > remaining) {
-        throw new AppError(`Insufficient leave balance. Available: ${remaining} day(s), Requested: ${days} day(s)`, 400);
-      }
-      // Reserve pending balance
-      await prisma.leaveBalance.update({
-        where: { userId_leaveType_year: { userId: req.user!.userId, leaveType, year } },
-        data: { pending: { increment: days } },
-      });
-    }
-
+    const userId = req.user!.userId;
     const user = await prisma.user.findUnique({
-      where: { id: req.user!.userId },
+      where: { id: userId },
       select: { managerId: true },
     });
 
-    const request = await prisma.leaveRequest.create({
-      data: {
-        userId: req.user!.userId,
-        leaveType,
-        startDate: start,
-        endDate: end,
-        days,
-        reason,
-        documentUrl: documentUrl || null,
-        approverId: user?.managerId || undefined,
-        dayType: dayType || 'FULL_DAY',
-      },
+    const request = await prisma.$transaction(async (tx) => {
+      // One request per person at a time, so two submitted together can't both pass the checks
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'leave:' + userId}))`;
+
+      const overlapping = await tx.leaveRequest.findMany({
+        where: { userId, status: { in: ['PENDING', 'APPROVED'] }, startDate: { lte: end }, endDate: { gte: start } },
+        orderBy: { startDate: 'asc' },
+      });
+      // Two half days can make up one date
+      const otherHalf = dayType === 'HALF_DAY' && overlapping.length === 1 && overlapping[0].dayType === 'HALF_DAY';
+      if (overlapping.length > 0 && !otherHalf) {
+        const o = overlapping[0];
+        const [first, last] = [o.startDate, o.endDate].map(d => d.toISOString().slice(0, 10));
+        throw new AppError(`This overlaps your ${o.status.toLowerCase()} ${o.leaveType.toLowerCase()} leave (${first === last ? first : `${first} to ${last}`})`, 409);
+      }
+
+      // Unpaid leave only draws on a balance if HR has set one
+      const where = { userId_leaveType_year: { userId, leaveType, year } };
+      const balance = await tx.leaveBalance.findUnique({ where });
+      if (leaveType !== 'UNPAID' || (balance && balance.entitled > 0)) {
+        const remaining = balance ? Math.max(0, balance.entitled - balance.used - balance.pending) : 0;
+        if (!balance || days > remaining) {
+          throw new AppError(`Insufficient leave balance. Available: ${remaining} day(s), Requested: ${days} day(s)`, 400);
+        }
+        // Reserve pending balance
+        await tx.leaveBalance.update({ where, data: { pending: { increment: days } } });
+      }
+
+      return tx.leaveRequest.create({
+        data: {
+          userId,
+          leaveType,
+          startDate: start,
+          endDate: end,
+          days,
+          reason,
+          documentUrl: documentUrl || null,
+          approverId: user?.managerId || undefined,
+          dayType: dayType || 'FULL_DAY',
+        },
+      });
     });
 
     if (user?.managerId) {
@@ -408,6 +423,207 @@ router.post('/balances/bulk-entitlement', authorize(...ADMIN_ROLES), async (req:
   } catch (err) {
     next(err);
   }
+});
+
+// ─── Leave balance spreadsheet ────────────────────────────────────────────────
+// One row per employee and one column per leave type, holding the days they're entitled to that year
+
+const BALANCE_COLUMNS: { type: LeaveType; label: string }[] = [
+  { type: 'ANNUAL', label: 'Annual' },
+  { type: 'SICK', label: 'Sick' },
+  { type: 'MATERNITY', label: 'Maternity' },
+  { type: 'PATERNITY', label: 'Paternity' },
+  { type: 'UNPAID', label: 'Unpaid' },
+  { type: 'COMPENSATORY', label: 'Compensatory' },
+  { type: 'OTHER', label: 'Other' },
+];
+
+const balanceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['.xlsx', '.xls', '.csv'].includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
+    else cb(new Error('Upload the template as .xlsx, .xls or .csv'));
+  },
+});
+
+// Accepts the template's headers, the stored names (ANNUAL) and stray spaces or case
+const headerKey = (h: string) => h.toLowerCase().replace(/[^a-z]/g, '');
+
+// GET /api/leave/balances/template?year=2026 — every employee with their current entitlements
+router.get('/balances/template', authorize(...ADMIN_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new AppError('Invalid year', 400);
+    const users = await prisma.user.findMany({
+      where: { organizationId: req.user!.organizationId, isActive: true, role: { not: 'SYSTEM_ADMIN' } },
+      select: { id: true, employeeId: true, email: true, firstName: true, lastName: true, department: { select: { name: true } } },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+    const balances = await prisma.leaveBalance.findMany({ where: { year, userId: { in: users.map(u => u.id) } } });
+    const entitled = new Map(balances.map(b => [`${b.userId}:${b.leaveType}`, b.entitled]));
+
+    const rows = users.map(u => ({
+      'Employee ID': u.employeeId || '',
+      'Email': u.email,
+      'Name': `${u.firstName} ${u.lastName}`.trim(),
+      'Department': u.department?.name || '',
+      'Year': year,
+      ...Object.fromEntries(BALANCE_COLUMNS.map(c => [c.label, entitled.get(`${u.id}:${c.type}`) ?? null])),
+    }));
+    const headers = ['Employee ID', 'Email', 'Name', 'Department', 'Year', ...BALANCE_COLUMNS.map(c => c.label)];
+    const sheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+    sheet['!cols'] = headers.map(h => ({ wch: ['Email', 'Name'].includes(h) ? 28 : 14 }));
+
+    const help = XLSX.utils.aoa_to_sheet([
+      ['How to fill in this sheet'],
+      ['Enter the number of days each employee is entitled to for the year, under each leave type.'],
+      ['Half days are allowed, for example 1.5. Use whole or half days only, from 0 to 366.'],
+      ['Leave a cell empty to keep that balance as it is. Enter 0 to give no days of that type.'],
+      ['Employees are matched by Email, or by Employee ID when Email is empty. Name and Department are not read.'],
+      ['Days already taken or awaiting approval are kept. A number lower than those days is refused.'],
+      ['Unpaid leave can be requested without a balance. Every other type needs one.'],
+      ['Nothing is saved if any row has a mistake; the upload lists every row to correct.'],
+    ]);
+    help['!cols'] = [{ wch: 100 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, 'Leave Balances');
+    XLSX.utils.book_append_sheet(wb, help, 'Instructions');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="leave-balances-${year}.xlsx"`);
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leave/balances/upload — sets entitlements from the template. All rows are saved, or none.
+router.post('/balances/upload', authorize(...ADMIN_ROLES), (req: AuthRequest, res: Response, next: NextFunction) => {
+  balanceUpload.single('file')(req, res, async (uploadErr: unknown) => {
+    try {
+      if (uploadErr) throw new AppError((uploadErr as Error).message || 'File upload failed', 400);
+      if (!req.file) throw new AppError('Choose a file to upload', 400);
+
+      let rows: Record<string, unknown>[];
+      try {
+        const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+        const ws = wb.Sheets['Leave Balances'] || wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+      } catch {
+        throw new AppError('This file could not be read. Download the template and fill that in.', 400);
+      }
+      if (rows.length === 0) throw new AppError('The file has no rows', 400);
+      if (rows.length > 5000) throw new AppError('Upload at most 5000 rows at a time', 400);
+
+      // Which column holds what, whatever case or spacing the headers have
+      const headers = Object.keys(rows[0]);
+      const find = (...names: string[]) => headers.find(h => names.includes(headerKey(h)));
+      const emailCol = find('email', 'emailaddress');
+      const idCol = find('employeeid', 'empid', 'employeecode');
+      const yearCol = find('year');
+      const typeCols = BALANCE_COLUMNS
+        .map(c => ({ ...c, header: find(headerKey(c.label), headerKey(c.type), `${headerKey(c.label)}leave`) }))
+        .filter((c): c is typeof c & { header: string } => !!c.header);
+      if (!emailCol && !idCol) throw new AppError('The file needs an Email or Employee ID column', 400);
+      if (typeCols.length === 0) throw new AppError(`The file needs at least one leave type column: ${BALANCE_COLUMNS.map(c => c.label).join(', ')}`, 400);
+
+      const users = await prisma.user.findMany({
+        where: { organizationId: req.user!.organizationId },
+        select: { id: true, email: true, employeeId: true, firstName: true, lastName: true },
+      });
+      const byEmail = new Map(users.map(u => [u.email.toLowerCase(), u]));
+      const byEmployeeId = new Map(users.filter(u => u.employeeId).map(u => [u.employeeId!.trim().toLowerCase(), u]));
+      const defaultYear = Number(req.body?.year) || new Date().getFullYear();
+
+      const errors: string[] = [];
+      const updates: { userId: string; leaveType: LeaveType; year: number; entitled: number }[] = [];
+      const seen = new Map<string, number>();
+      let skipped = 0;
+
+      rows.forEach((row, i) => {
+        const line = i + 2; // the header is row 1
+        const text = (col?: string) => (col ? String(row[col] ?? '').trim() : '');
+        const email = text(emailCol);
+        const employeeId = text(idCol);
+        const cells = typeCols.map(c => ({ ...c, raw: text(c.header) })).filter(c => c.raw !== '');
+        if (!email && !employeeId) {
+          if (cells.length > 0) errors.push(`Row ${line}: enter the employee's Email or Employee ID`);
+          else skipped++;
+          return;
+        }
+        const user = (email && byEmail.get(email.toLowerCase())) || (!email && employeeId ? byEmployeeId.get(employeeId.toLowerCase()) : undefined);
+        if (!user) {
+          errors.push(`Row ${line}: no employee with ${email ? `email ${email}` : `Employee ID ${employeeId}`}`);
+          return;
+        }
+        const yearText = text(yearCol);
+        const year = yearText === '' ? defaultYear : Number(yearText);
+        if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+          errors.push(`Row ${line}: "${yearText}" is not a valid year`);
+          return;
+        }
+        const key = `${user.id}:${year}`;
+        if (seen.has(key)) {
+          errors.push(`Row ${line}: ${user.email} for ${year} is already on row ${seen.get(key)}`);
+          return;
+        }
+        seen.set(key, line);
+        if (cells.length === 0) { skipped++; return; }
+
+        for (const c of cells) {
+          const days = Number(c.raw);
+          if (!Number.isFinite(days) || days < 0 || days > 366 || !Number.isInteger(days * 2)) {
+            errors.push(`Row ${line}: ${c.label} must be a number of whole or half days from 0 to 366, not "${c.raw}"`);
+          } else {
+            updates.push({ userId: user.id, leaveType: c.type, year, entitled: days });
+          }
+        }
+      });
+
+      // A balance can't drop below what has already been taken or requested
+      if (updates.length > 0) {
+        const existing = await prisma.leaveBalance.findMany({
+          where: { userId: { in: [...new Set(updates.map(u => u.userId))] }, year: { in: [...new Set(updates.map(u => u.year))] } },
+        });
+        const current = new Map(existing.map(b => [`${b.userId}:${b.leaveType}:${b.year}`, b]));
+        for (const u of updates) {
+          const b = current.get(`${u.userId}:${u.leaveType}:${u.year}`);
+          if (b && u.entitled < b.used + b.pending) {
+            const label = BALANCE_COLUMNS.find(c => c.type === u.leaveType)!.label;
+            errors.push(`Row ${seen.get(`${u.userId}:${u.year}`)}: ${label} cannot be ${u.entitled}; ${b.used + b.pending} day(s) are already taken or awaiting approval`);
+          }
+        }
+      }
+
+      if (errors.length > 0) {
+        res.status(400).json({
+          message: `Nothing was saved. Correct ${errors.length === 1 ? 'this row' : `these ${errors.length} problems`} and upload again.`,
+          errors: errors.slice(0, 100),
+          moreErrors: Math.max(0, errors.length - 100),
+        });
+        return;
+      }
+      if (updates.length === 0) throw new AppError('The file has no balances to save. Enter days under the leave type columns.', 400);
+
+      await prisma.$transaction(updates.map(u => prisma.leaveBalance.upsert({
+        where: { userId_leaveType_year: { userId: u.userId, leaveType: u.leaveType, year: u.year } },
+        update: { entitled: u.entitled },
+        create: { ...u, used: 0, pending: 0 },
+      })));
+
+      const employees = new Set(updates.map(u => u.userId)).size;
+      res.json({
+        message: `Saved ${updates.length} balance${updates.length === 1 ? '' : 's'} for ${employees} employee${employees === 1 ? '' : 's'}`,
+        employees,
+        balances: updates.length,
+        skipped,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
 });
 
 // HR Admin: delete leave balance record

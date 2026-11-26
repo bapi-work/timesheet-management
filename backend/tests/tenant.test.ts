@@ -79,8 +79,8 @@ describe('organization isolation', () => {
     const emp = await createUser(orgA.id);
     const b = await clientAndProject(orgB.id);
     const { timesheet } = await createTimesheet(emp.id);
-    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ date: WEEK.entryDate, hours: 1, projectId: b.project.id })).status).toBe(404);
-    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ date: WEEK.entryDate, hours: 1, taskId: b.task.id })).status).toBe(404);
+    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ date: WEEK.entryDate, hours: 1, description: 'x', projectId: b.project.id })).status).toBe(404);
+    expect((await as(emp).post(`/api/timesheets/${timesheet.id}/entries`).send({ date: WEEK.entryDate, hours: 1, description: 'x', taskId: b.task.id })).status).toBe(404);
     expect((await as(emp).post('/api/timer/start').send({ projectId: b.project.id })).status).toBe(404);
     expect((await as(emp).post('/api/expenses').send({ category: 'x', amount: 1, date: '2026-03-04', description: 'd', projectId: b.project.id })).status).toBe(404);
   });

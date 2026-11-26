@@ -11,6 +11,7 @@ import { useAuthStore } from '../store/auth.store';
 import { format, subMonths, startOfMonth, startOfYear } from 'date-fns';
 import { Bar, Doughnut } from 'react-chartjs-2';
 import { ANALYTICS_ROLES, ADMIN_ROLES, hasRole } from '../lib/roles';
+import { formatDay, formatPeriod, timesheetStatus } from '../lib/timesheet';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
   LineElement, BarElement, ArcElement, Title, Tooltip, Legend, Filler,
@@ -67,11 +68,6 @@ function StatCard({ label, value, icon: Icon, color, sub }: {
     </div>
   );
 }
-
-const STATUS_BADGE: Record<string, string> = {
-  DRAFT: 'badge-gray', SUBMITTED: 'badge-blue', APPROVED: 'badge-green',
-  REJECTED: 'badge-red', LOCKED: 'badge-purple', NOT_STARTED: 'badge-yellow',
-};
 
 const CHART_COLORS = [
   '#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed',
@@ -444,7 +440,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <StatCard
               label="Current Timesheet"
-              value={dashboard?.currentTimesheetStatus?.replace(/_/g, ' ') || 'NOT STARTED'}
+              value={timesheetStatus(dashboard?.currentTimesheetStatus || 'NOT_STARTED').label}
               icon={DocumentCheckIcon}
               color={dashboard?.currentTimesheetStatus === 'APPROVED' ? 'bg-green-500' : 'bg-orange-500'}
             />
@@ -473,15 +469,15 @@ export default function DashboardPage() {
                   {(dashboard?.recentTimesheets || []).map((ts: Record<string, unknown>) => (
                     <tr key={ts.id as string} className="tr-hover">
                       <td className="td">
-                        {format(new Date(ts.periodStart as string), 'MMM d')} – {format(new Date(ts.periodEnd as string), 'MMM d, yyyy')}
+                        {formatPeriod(ts.periodStart as string, ts.periodEnd as string)}
                       </td>
                       <td className="td">{(ts.totalHours as number).toFixed(2)}h</td>
                       <td className="td text-green-600">{((ts.billableHours as number) || 0).toFixed(2)}h</td>
                       <td className="td">
-                        <span className={STATUS_BADGE[ts.status as string] || 'badge-gray'}>{ts.status as string}</span>
+                        <span className={timesheetStatus(ts.displayStatus as string).cls}>{timesheetStatus(ts.displayStatus as string).label}</span>
                       </td>
                       <td className="td text-xs text-gray-400">
-                        {ts.submittedAt ? format(new Date(ts.submittedAt as string), 'MMM d') : '—'}
+                        {ts.submittedAt ? formatDay(ts.submittedAt as string, 'MMM d') : '—'}
                       </td>
                       <td className="td">
                         <Link to={`/timesheets/${ts.id}`} className="text-primary-600 hover:underline text-xs">View</Link>

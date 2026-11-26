@@ -10,6 +10,7 @@ import {
 } from 'chart.js';
 import { useAuthStore } from '../store/auth.store';
 import { hasRole, ANALYTICS_ROLES, ADMIN_ROLES } from '../lib/roles';
+import { formatDay, formatPeriod, timesheetStatus } from '../lib/timesheet';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend);
 
@@ -48,7 +49,7 @@ export default function ReportsPage() {
   };
 
   const endpointMap: Record<ReportType, string> = {
-    'my-timesheets': `/timesheets?limit=100&from=${from}&to=${to}`,
+    'my-timesheets': `/timesheets?mine=true&limit=100&from=${from}&to=${to}`,
     utilization: `/reports/utilization?from=${from}&to=${to}${departmentFilter ? `&departmentId=${departmentFilter}` : ''}`,
     'project-effort': `/reports/project-effort?from=${from}&to=${to}`,
     overtime: `/reports/overtime?from=${from}&to=${to}${employeeFilter ? `&userId=${employeeFilter}` : ''}`,
@@ -81,13 +82,13 @@ export default function ReportsPage() {
   const handleExport = async (fmt: string) => {
     if (reportType === 'my-timesheets') {
       const rows = data.map((ts: Record<string, unknown>) => [
-        ts.periodStart ? format(new Date(ts.periodStart as string), 'MMM d, yyyy') : '',
-        ts.periodEnd ? format(new Date(ts.periodEnd as string), 'MMM d, yyyy') : '',
-        (ts.totalHours as number || 0).toFixed(1),
-        (ts.billableHours as number || 0).toFixed(1),
-        (ts.overtimeHours as number || 0).toFixed(1),
-        ts.status as string,
-        ts.submittedAt ? format(new Date(ts.submittedAt as string), 'MMM d, yyyy') : '',
+        ts.periodStart ? formatDay(ts.periodStart as string) : '',
+        ts.periodEnd ? formatDay(ts.periodEnd as string) : '',
+        (ts.totalHours as number || 0).toFixed(2),
+        (ts.billableHours as number || 0).toFixed(2),
+        (ts.overtimeHours as number || 0).toFixed(2),
+        timesheetStatus(ts.displayStatus as string).label,
+        ts.submittedAt ? formatDay(ts.submittedAt as string) : '',
       ]);
       const header = ['Period Start', 'Period End', 'Total Hours', 'Billable Hours', 'Overtime Hours', 'Status', 'Submitted At'];
       const csv = [header, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
@@ -149,24 +150,26 @@ export default function ReportsPage() {
   function getVal(row: Record<string, unknown>, key: string): string | number | boolean | null | undefined {
     if (key === 'period') {
       const s = row.periodStart, e = row.periodEnd;
-      if (s && e) return `${format(new Date(s as string), 'MMM d')} – ${format(new Date(e as string), 'MMM d, yyyy')}`;
+      if (s && e) return formatPeriod(s as string, e as string);
       return '—';
     }
     if (key === 'name' && row.firstName) return `${row.firstName} ${row.lastName}`;
     const parts = key.split('.');
     let val: unknown = row;
     for (const p of parts) val = (val as Record<string, unknown>)?.[p];
-    if (typeof val === 'number') return val.toFixed(1);
-    if (val instanceof Date || (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val))) {
-      try { return format(new Date(val as string), 'MMM d, yyyy'); } catch {}
+    if (typeof val === 'number') return key.endsWith('Pct') || key === 'budgetUtilization' ? Math.round(val) : val.toFixed(2);
+    if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+      try { return formatDay(val); } catch {}
     }
     return (val as string | number | boolean | null | undefined) ?? '—';
   }
 
-  const STATUS_BADGE: Record<string, string> = {
-    DRAFT: 'badge-gray', SUBMITTED: 'badge-blue', APPROVED: 'badge-green',
-    REJECTED: 'badge-red', LOCKED: 'badge-purple',
-  };
+  const sum = (key: string) => data.reduce((s: number, r: Record<string, unknown>) => s + ((r[key] as number) || 0), 0);
+
+  // Share of logged hours that is billable. The employee report averages this across people.
+  const avgUtilization = reportType === 'utilization'
+    ? sum('utilizationPct') / Math.max(data.filter((r: Record<string, unknown>) => r.totalHours).length, 1)
+    : sum('totalHours') > 0 ? (sum('billableHours') / sum('totalHours')) * 100 : 0;
 
   // Build chart data based on report type
   const chartData = (() => {
@@ -199,7 +202,7 @@ export default function ReportsPage() {
     }
     if (reportType === 'my-timesheets') {
       return {
-        labels: data.map((r: Record<string, unknown>) => r.periodStart ? format(new Date(r.periodStart as string), 'MMM d') : ''),
+        labels: data.map((r: Record<string, unknown>) => r.periodStart ? formatDay(r.periodStart as string, 'MMM d') : ''),
         datasets: [
           {
             label: 'Total Hours',
@@ -346,7 +349,7 @@ export default function ReportsPage() {
                   responsive: true,
                   plugins: {
                     legend: { position: 'right' },
-                    tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${(ctx.raw as number).toFixed(1)}h` } },
+                    tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${(ctx.raw as number).toFixed(2)}h` } },
                   },
                 }}
               />
@@ -381,7 +384,7 @@ export default function ReportsPage() {
                   {columns[reportType].map(c => (
                     <td key={c.key} className="td">
                       {c.key === 'status' ? (
-                        <span className={STATUS_BADGE[row.status as string] || 'badge-gray'}>{row.status as string}</span>
+                        <span className={timesheetStatus(row.displayStatus as string).cls}>{timesheetStatus(row.displayStatus as string).label}</span>
                       ) : c.key === 'utilizationPct' || c.key === 'budgetUtilization' ? (
                         <div className="flex items-center gap-2">
                           <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden min-w-[60px]">
@@ -415,22 +418,19 @@ export default function ReportsPage() {
           <div>
             <p className="text-xs text-gray-500">Total Hours</p>
             <p className="text-xl font-bold text-gray-900">
-              {data.reduce((s: number, r: Record<string, unknown>) => s + ((r.totalHours as number) || 0), 0).toFixed(1)}h
+              {sum('totalHours').toFixed(2)}h
             </p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Billable Hours</p>
             <p className="text-xl font-bold text-green-600">
-              {data.reduce((s: number, r: Record<string, unknown>) => s + ((r.billableHours as number) || 0), 0).toFixed(1)}h
+              {sum('billableHours').toFixed(2)}h
             </p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Avg Utilization</p>
             <p className="text-xl font-bold text-blue-600">
-              {(
-                data.reduce((s: number, r: Record<string, unknown>) => s + ((r.utilizationPct as number) || 0), 0) /
-                Math.max(data.filter((r: Record<string, unknown>) => r.totalHours).length, 1)
-              ).toFixed(0)}%
+              {avgUtilization.toFixed(0)}%
             </p>
           </div>
           <div>

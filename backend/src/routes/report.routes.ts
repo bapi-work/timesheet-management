@@ -1,6 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import prisma from '../utils/prisma';
 import { authenticate, authorize, AuthRequest, ANALYTICS_ROLES, MANAGER_ROLES } from '../middleware/auth.middleware';
+import { weekPeriod } from '../utils/timesheet-rules';
 import * as XLSX from 'xlsx';
 import PDFDocument from 'pdfkit';
 
@@ -118,8 +119,9 @@ router.get('/overtime', authorize(...MANAGER_ROLES), async (req: AuthRequest, re
 router.get('/missing-timesheets', authorize(...MANAGER_ROLES), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { from, to } = req.query;
-    const periodStart = from ? new Date(from as string) : getWeekStart();
-    const periodEnd = to ? new Date(to as string) : getWeekEnd();
+    const week = await currentWeek(req.user!.organizationId);
+    const periodStart = from ? new Date(from as string) : week.periodStart;
+    const periodEnd = to ? new Date(to as string) : week.periodEnd;
 
     const allUsers = await prisma.user.findMany({
       where: { organizationId: req.user!.organizationId, isActive: true, role: { not: 'SYSTEM_ADMIN' } },
@@ -248,8 +250,9 @@ router.get('/export', authorize(...MANAGER_ROLES), async (req: AuthRequest, res:
       }));
       title = 'Overtime Analysis Report';
     } else if (type === 'missing') {
-      const periodStart = from ? new Date(from as string) : getWeekStart();
-      const periodEnd = to ? new Date(to as string) : getWeekEnd();
+      const week = await currentWeek(req.user!.organizationId);
+      const periodStart = from ? new Date(from as string) : week.periodStart;
+      const periodEnd = to ? new Date(to as string) : week.periodEnd;
 
       const allUsers = await prisma.user.findMany({
         where: { organizationId: req.user!.organizationId, isActive: true, role: { not: 'SYSTEM_ADMIN' } },
@@ -322,18 +325,9 @@ function csvSafe(value: unknown): unknown {
   return typeof value === 'string' && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
 }
 
-function getWeekStart(): Date {
-  const d = new Date();
-  d.setDate(d.getDate() - d.getDay() + 1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function getWeekEnd(): Date {
-  const d = getWeekStart();
-  d.setDate(d.getDate() + 6);
-  d.setHours(23, 59, 59, 999);
-  return d;
+async function currentWeek(organizationId: string) {
+  const org = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { weekStartDay: true } });
+  return weekPeriod(new Date(), org.weekStartDay);
 }
 
 export default router;

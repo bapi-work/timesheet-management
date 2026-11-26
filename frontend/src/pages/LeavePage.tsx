@@ -6,9 +6,10 @@ import api from '../lib/api';
 import { csvCell } from '../lib/csv';
 import { openAttachment } from '../lib/files';
 import toast from 'react-hot-toast';
-import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, ArrowDownTrayIcon, UserPlusIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, CalendarDaysIcon, TrashIcon, PaperClipIcon, ArrowDownTrayIcon, ArrowUpTrayIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '../store/auth.store';
 import { ADMIN_ROLES, hasRole } from '../lib/roles';
+import LeaveBalanceUploadModal from '../components/LeaveBalanceUploadModal';
 
 function exportLeaveCSV(requests: Record<string, unknown>[], filename: string) {
   const rows = [
@@ -65,6 +66,7 @@ export default function LeavePage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [showBulkEntitlementModal, setShowBulkEntitlementModal] = useState(false);
   const [showAddBalanceModal, setShowAddBalanceModal] = useState(false);
+  const [showBalanceUpload, setShowBalanceUpload] = useState(false);
   const [adminDeptFilter, setAdminDeptFilter] = useState('');
   const [adminDateFrom, setAdminDateFrom] = useState('');
   const [adminDateTo, setAdminDateTo] = useState('');
@@ -303,12 +305,13 @@ export default function LeavePage() {
                 const b = (balances as Record<string, unknown>[]).find(x => x.leaveType === lt);
                 const entitled = (b?.entitled as number) || 0;
                 const used = (b?.used as number) || 0;
-                const remaining = entitled - used;
+                const pending = (b?.pending as number) || 0;
+                const remaining = entitled - used - pending;
                 return (
                   <div key={lt} className="card text-center py-3">
                     <p className="text-xs text-gray-500">{lt.replace(/_/g, ' ')}</p>
                     <p className={`text-3xl font-bold mt-1 ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`}>{remaining}</p>
-                    <p className="text-xs text-gray-400">{used} used of {entitled}</p>
+                    <p className="text-xs text-gray-400">{used} used of {entitled}{pending > 0 && `, ${pending} pending`}</p>
                   </div>
                 );
               })}
@@ -463,6 +466,9 @@ export default function LeavePage() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="font-semibold text-gray-900">Employee Leave Balances — {new Date().getFullYear()}</h2>
               <div className="flex gap-2 flex-wrap">
+                <button onClick={() => setShowBalanceUpload(true)} className="btn-primary btn-sm flex items-center gap-1.5">
+                  <ArrowUpTrayIcon className="h-4 w-4" /> Upload Balances
+                </button>
                 <button onClick={() => setShowAddBalanceModal(true)} className="btn-secondary btn-sm flex items-center gap-1.5">
                   <UserPlusIcon className="h-4 w-4" /> Add Balance
                 </button>
@@ -786,6 +792,8 @@ export default function LeavePage() {
           </div>
         </div>
       )}
+
+      {showBalanceUpload && <LeaveBalanceUploadModal onClose={() => setShowBalanceUpload(false)} />}
 
       {/* Bulk Entitlement Modal */}
       {showBulkEntitlementModal && (
